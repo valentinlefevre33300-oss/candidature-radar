@@ -22,7 +22,12 @@ export async function renderSettings() {
         <div class="muted" style="font-size:13px;margin:4px 0 16px">Les mails partent depuis ta boîte, avec ton CV en pièce jointe. On lit aussi les en-têtes de tes fils pour détecter les réponses — jamais le contenu.</div>
         ${g.connected ? `
           <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><span class="mono biz sm">✓</span><div><b>${esc(g.email || 'Compte connecté')}</b><div class="muted" style="font-size:12.5px">envoi + lecture des en-têtes</div></div>
-          <span style="flex:1"></span><button class="btn btn-white btn-sm" id="gmDisc">Déconnecter</button></div>`
+          <span style="flex:1"></span><button class="btn btn-white btn-sm" id="gmDisc">Déconnecter</button></div>
+          <div style="display:flex;gap:10px;align-items:center;margin-top:16px;flex-wrap:wrap">
+            <input class="input on-paper" id="gmTestJob" placeholder="Poste pour le test" value="développeur Python" style="max-width:240px;padding:8px 12px">
+            <button class="btn btn-primary btn-sm" id="gmTest">✉ M'envoyer un mail de test</button>
+          </div>
+          <div class="hint" style="margin-top:8px">Un vrai envoi, vers ta boîte uniquement, avec ton CV et un paragraphe rédigé sur une vraie entreprise. Pour te relire avant de lancer.</div>`
         : g.configured ? `
           ${g.needs_reconnect ? `<div class="banner" style="margin-bottom:14px"><span><b>Autorisation expirée</b> — Google la limite à 7 jours pour une application en mode test${g.email ? ` (${esc(g.email)})` : ''}. Les campagnes actives sont en pause ; reconnecte-toi puis reprends-les.</span></div>` : ''}
           <a class="btn btn-primary btn-block" href="/api/gmail/connect">${g.needs_reconnect ? 'Reconnecter mon Gmail' : 'Continuer avec Google'}</a>
@@ -79,6 +84,15 @@ export async function renderSettings() {
     </section>`;
 
   const disc = $('#gmDisc'); if (disc) disc.onclick = async () => { if (!confirm('Déconnecter Gmail ?')) return; await api('/api/gmail/disconnect', { method: 'POST' }); toast('Déconnecté'); renderSettings(); };
+  const test = $('#gmTest'); if (test) test.onclick = async () => {
+    test.disabled = true; test.textContent = 'Rédaction et envoi…';
+    try {
+      const runs = await api('/api/runs');
+      const r = await api('/api/gmail/test', { method: 'POST', body: JSON.stringify({ job_title: $('#gmTestJob').value, run_id: runs[0]?.id || null }) });
+      toast(`Envoyé à ${r.to} — « ${r.subject} »`);
+    } catch (e) { toast(e.message); }
+    test.disabled = false; test.textContent = '✉ M’envoyer un mail de test';
+  };
   $('#dry').onclick = async () => { const on = !$('#dry').classList.contains('on'); await api('/api/settings', { method: 'PUT', body: JSON.stringify({ dry_run: on }) }); $('#dry').classList.toggle('on', on); toast(on ? 'Simulation activée' : 'Envois réels activés'); state.settings = null; window.refreshBadges && window.refreshBadges(); };
   $('#stSave').onclick = async () => { await api('/api/settings', { method: 'PUT', body: JSON.stringify({ sender_name: $('#stName').value, signature: $('#stSig').value, profile_summary: $('#stProfile').value }) }); toast('Enregistré'); state.settings = null; };
   $('#stCv').onchange = async (e) => { const f = e.target.files[0]; if (!f) return; const fd = new FormData(); fd.append('file', f);

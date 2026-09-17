@@ -349,6 +349,29 @@ async def gmail_disconnect() -> dict:
     return {"ok": True}
 
 
+class TestMailPayload(BaseModel):
+    job_title: str = "développeur Python"
+    run_id: int | None = None
+
+
+@app.post("/api/gmail/test")
+async def gmail_test(payload: TestMailPayload) -> dict:
+    """Un vrai envoi, vers la boîte connectée uniquement : pour se relire."""
+    to = (gmail.connected_email() or "").strip().lower()
+    if not to:
+        raise HTTPException(status_code=400, detail="Gmail n'est pas connecté")
+    sample = None
+    if payload.run_id:
+        picked = engine.pick_recipients(payload.run_id)["recipients"]
+        sample = picked[0] if picked else None
+    try:
+        return await engine.send_test(to, payload.job_title.strip() or "développeur Python", sample)
+    except gmail.GmailNotConnected as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except gmail.GmailError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+
 # ------------------------------------------------------------- campagnes ---
 
 class CampaignCreate(BaseModel):

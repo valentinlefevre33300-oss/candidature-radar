@@ -302,6 +302,34 @@ async def send_one(application: dict) -> None:
                  campaign_id=campaign["id"], application_id=application["id"])
 
 
+async def send_test(to: str, job_title: str, sample: dict | None = None) -> dict:
+    """Envoie un vrai mail de test — hors campagne, hors quotas — pour se relire.
+
+    `sample` est un destinataire réel (entreprise, fonction) dont on reprend les
+    faits pour que le paragraphe personnalisé soit représentatif ; seule
+    l'adresse est remplacée par celle du testeur.
+    """
+    if not gmail.is_connected():
+        raise gmail.GmailNotConnected("Gmail n'est pas connecté")
+    settings = db.all_settings()
+    campaign = {"job_title": job_title, "subject_tpl": None, "body_tpl": None}
+    application = dict(sample or {"company_name": "Exemple SAS", "company_city": "Bordeaux",
+                                  "company_size": "20 à 49 salariés", "company_naf": "62.01Z"})
+    application["email"] = to
+    application["token"] = None   # pas de pixel sur un test
+    rendered = await compose.compose(application, campaign, settings, personalize=True)
+    attachments = _attachment(campaign, settings)
+    message = gmail.build_message(
+        sender=gmail.connected_email() or "", sender_name=settings.get("sender_name") or "",
+        to=to, subject=rendered["subject"], text=rendered["body_text"], html=rendered["body_html"],
+        attachments=attachments)
+    message_id, _thread = await gmail.send(message)
+    db.add_event("test", f"mail de test envoyé à {to}")
+    return {"to": to, "subject": rendered["subject"], "engine": rendered["engine"],
+            "attachment": attachments[0][0] if attachments else None, "message_id": message_id,
+            "sample": application.get("company_name")}
+
+
 def _close_if_done(campaign_id: int) -> None:
     campaign = db.get_campaign(campaign_id)
     if campaign and campaign["status"] == "active" and campaign["scheduled"] == 0:
