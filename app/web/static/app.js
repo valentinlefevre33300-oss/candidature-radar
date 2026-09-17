@@ -1,5 +1,5 @@
 /* Point d'entrée : routeur, barre latérale, démarrage. */
-import { $, $$, api, state } from './core.js';
+import { $, $$, api, esc, state } from './core.js';
 import { renderSearch, renderRun, renderSuivi } from './views-search.js';
 import { renderDashboard as renderCampaigns, renderWizard, renderCampaign } from './views-campaigns.js';
 import { renderSettings } from './views-settings.js';
@@ -42,8 +42,20 @@ document.addEventListener('keydown', e => {
   if (e.key === '/' && !e.target.matches('input, textarea, select')) { const j = $('#job') || $('#wzJob'); if (j) { e.preventDefault(); j.focus(); } }
 });
 
+async function showAccount() {
+  let me = null;
+  try { me = await api('/api/me'); } catch { return; }
+  const slot = $('#account');
+  if (!me || !me.session || !slot) return;
+  const initial = (me.name || me.email || '?').trim()[0].toUpperCase();
+  const face = me.picture ? `<img src="${esc(me.picture)}" alt="" referrerpolicy="no-referrer">` : `<b>${esc(initial)}</b>`;
+  slot.innerHTML = `<a href="/api/auth/logout" class="avatar" aria-label="Se déconnecter">${face}</a><span class="tip">${esc(me.email)} · se déconnecter</span>`;
+  slot.hidden = false;
+}
+
 (async function boot() {
   try { state.sectors = await api('/api/sectors'); } catch {}
   refreshBadges();
+  showAccount();
   route();
 })();

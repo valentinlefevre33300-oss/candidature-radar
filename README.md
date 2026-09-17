@@ -183,12 +183,34 @@ Pour les campagnes :
 | `CR_PUBLIC_URL` | URL publique de l'application, pour le pixel d'ouverture. Vide en local. |
 | `CR_MONTHLY_CAP` / `CR_DAILY_CAP` / `CR_SEND_INTERVAL` | Plafonds et espacement des envois. |
 | `CR_DRY_RUN` | `1` force la simulation quoi qu'il arrive (l'interrupteur des réglages fait la même chose sans redémarrer). |
-| `CR_APP_PASSWORD` / `CR_APP_USER` | Mot de passe demandé par le navigateur (HTTP Basic) pour ouvrir l'interface depuis un autre appareil — téléphone sur le même Wi-Fi (`http://<IP du PC>:8010`) ou déploiement. **Tant qu'il est vide, seul le PC lui-même est accepté**, même si le serveur écoute sur le réseau : l'outil envoie des mails, il ne doit jamais être ouvert par oubli. Le pixel d'ouverture reste accessible sans mot de passe. |
+| `CR_ALLOWED_EMAILS` | Comptes Google autorisés à ouvrir l'interface, en plus de l'adresse Gmail connectée (virgules). Vide : seule la boîte d'envoi entre. |
+| `CR_REQUIRE_LOGIN` | `1` demande la connexion même depuis le PC (par défaut le poste local entre sans rien). |
+| `CR_APP_PASSWORD` / `CR_APP_USER` | Voie de secours : mot de passe demandé par le navigateur (HTTP Basic) quand la connexion Google est impossible — téléphone sur le Wi-Fi via `http://<IP du PC>:8010`, car Google refuse de renvoyer vers une adresse IP. Vide : la voie de secours n'existe pas. |
 
 Le jeton Gmail est stocké dans `data/gmail_token.json` (ignoré par git). Portées
 demandées : `gmail.send` et `gmail.readonly` — envoyer, et lire les réponses reçues
 **dans les fils des mails envoyés par l'outil**, pour les classer. Le reste de la boîte
 n'est jamais consulté ; le code qui lit un fil est dans `app/gmail.py`, une fonction.
+
+## Connexion à l'interface
+
+Sur le PC, l'interface s'ouvre directement. Dès qu'elle est jointe d'ailleurs — un
+autre appareil, un hébergeur — il faut se connecter : page `/login`, bouton
+**Continuer avec Google**, même client OAuth que pour Gmail (portées `openid email
+profile` seulement, rien sur la boîte). **Seul le compte de la boîte d'envoi
+connectée est accepté**, plus les adresses listées dans `CR_ALLOWED_EMAILS` ; tout
+autre compte Google est renvoyé avec un refus. La session est un cookie signé
+(clé générée une fois dans `data/session_secret`, ignorée par git), valable 30 jours,
+révoqué par le bouton de déconnexion en bas de la barre latérale.
+
+Derrière un reverse proxy, uvicorn voit `127.0.0.1` pour tout le monde : la garde
+n'accorde le passage « local » qu'aux requêtes sans en-tête `X-Forwarded-For` et
+demandées sur `localhost`, donc jamais à un visiteur passé par l'hébergeur.
+
+Pour un déploiement, déclarer dans Google Cloud l'URI de redirection
+`https://<domaine>/api/gmail/callback` (elle sert aux deux flux) et renseigner
+`CR_BASE_URL=https://<domaine>`. Le pixel d'ouverture (`/t/…`) reste ouvert : les
+messageries le chargent sans session.
 
 ## Tests
 

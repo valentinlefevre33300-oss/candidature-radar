@@ -10,20 +10,21 @@ import asyncio
 import base64
 import json
 import logging
+import re
 import secrets
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, Response, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi import FastAPI, File, HTTPException, Request, Response, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 import httpx
 
 from .. import campaigns as engine
-from .. import compose, db, geo, gmail
+from .. import auth, compose, db, geo, gmail
 from ..config import (APP_PASSWORD, APP_USER, BASE_URL, DAILY_CAP, DRY_RUN, MONTHLY_CAP,
-                      PUBLIC_URL, ROOT)
+                      PUBLIC_URL, REQUIRE_LOGIN, ROOT)
 from ..models import SearchQuery
 from ..naf import catalogue, codes_for
 from ..pipeline import run_search
@@ -36,38 +37,70 @@ app = FastAPI(title="Candidature Radar", docs_url="/api/docs")
 
 
 _LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost"}
+# Ce qui reste ouvert sans session : le pixel (les messageries le chargent), la
+# page de connexion et les retours de Google.
+_OPEN_PREFIXES = ("/t/", "/login", "/api/auth/", "/api/gmail/callback")
+
+
+def _is_local(request) -> bool:
+    """Requête venue du poste lui-même, sans rien devant.
+
+    Derrière un reverse proxy (hébergeur), uvicorn voit 127.0.0.1 pour tout le
+    monde : l'en-tête transmis par le proxy et le nom d'hôte demandé trahissent
+    alors la vraie provenance, et on exige la connexion.
+    """
+    client = (request.client.host if request.client else "") or ""
+    if client not in _LOCAL_HOSTS:
+        return False
+    if any(request.headers.get(h) for h in ("x-forwarded-for", "x-real-ip", "forwarded")):
+        return False
+    host = request.headers.get("host", "").rsplit(":", 1)[0].strip("[]")
+    return host in _LOCAL_HOSTS
+
+
+def _basic_ok(request) -> bool:
+    """Mot de passe HTTP : la voie de secours pour le téléphone sur le Wi-Fi,
+    où Google refuse de renvoyer vers une adresse IP."""
+    if not APP_PASSWORD:
+        return False
+    header = request.headers.get("authorization", "")
+    if not header.lower().startswith("basic "):
+        return False
+    try:
+        user, _, password = base64.b64decode(header[6:]).decode("utf-8", "replace").partition(":")
+    except (ValueError, UnicodeDecodeError):
+        return False
+    return secrets.compare_digest(password, APP_PASSWORD) and secrets.compare_digest(user, APP_USER)
+
+
+def current_user(request) -> dict | None:
+    session = auth.read_session(request.cookies.get(auth.COOKIE))
+    if session and auth.is_allowed(session.get("email")):
+        return session
+    return None
 
 
 @app.middleware("http")
 async def _guard(request, call_next):
-    """Mot de passe devant l'interface, hors pixel d'ouverture.
+    """Connexion Google devant l'interface (mot de passe HTTP en secours).
 
-    L'outil envoie des mails depuis un Gmail : dès qu'il écoute sur le réseau,
-    il faut un mot de passe. Sans mot de passe défini, on n'accepte que le poste
-    local — jamais d'exposition par oubli.
+    L'outil envoie des mails depuis un Gmail : dès qu'il est joignable d'ailleurs
+    que du poste local, il faut être connecté. Le poste local entre sans rien,
+    sauf si CR_REQUIRE_LOGIN=1.
     """
     path = request.url.path
-    if path.startswith("/t/"):
-        return await call_next(request)   # le pixel doit rester ouvert aux messageries
-    client = (request.client.host if request.client else "") or ""
-    if not APP_PASSWORD:
-        if client in _LOCAL_HOSTS:
-            return await call_next(request)
-        return Response("Accès refusé : définis CR_APP_PASSWORD dans .env pour ouvrir "
-                        "l'interface au réseau.", status_code=403, media_type="text/plain; charset=utf-8")
-    header = request.headers.get("authorization", "")
-    ok = False
-    if header.lower().startswith("basic "):
-        try:
-            user, _, password = base64.b64decode(header[6:]).decode("utf-8", "replace").partition(":")
-            ok = secrets.compare_digest(password, APP_PASSWORD) and \
-                secrets.compare_digest(user, APP_USER)
-        except (ValueError, UnicodeDecodeError):
-            ok = False
-    if not ok:
+    if path.startswith(_OPEN_PREFIXES):
+        return await call_next(request)
+    if not REQUIRE_LOGIN and _is_local(request):
+        return await call_next(request)
+    if current_user(request) or _basic_ok(request):
+        return await call_next(request)
+    if request.query_params.get("basic") == "1" and APP_PASSWORD:
         return Response("Authentification requise", status_code=401,
                         headers={"WWW-Authenticate": 'Basic realm="Candidature Radar", charset="UTF-8"'})
-    return await call_next(request)
+    if path.startswith("/api/"):
+        return JSONResponse({"detail": "Connexion requise"}, status_code=401)
+    return RedirectResponse("/login", status_code=302)
 
 
 @app.middleware("http")
@@ -131,6 +164,57 @@ async def _shutdown() -> None:
 @app.get("/", response_class=HTMLResponse)
 async def index() -> HTMLResponse:
     return HTMLResponse((STATIC / "index.html").read_text(encoding="utf-8"))
+
+
+# ------------------------------------------------------------- Connexion ---
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request) -> Response:
+    if current_user(request) or (not REQUIRE_LOGIN and _is_local(request)):
+        return RedirectResponse("/", status_code=302)
+    html = (STATIC / "login.html").read_text(encoding="utf-8")
+    if not APP_PASSWORD:   # pas de mot de passe défini : inutile de proposer la voie de secours
+        html = re.sub(r'<div class="alt">.*?</div>\n', "", html, flags=re.S)
+    return HTMLResponse(html)
+
+
+@app.get("/api/auth/google")
+async def auth_google() -> RedirectResponse:
+    try:
+        return RedirectResponse(auth.login_url())
+    except auth.AuthError:
+        return RedirectResponse("/login?error=config")
+
+
+async def _login_callback(code: str, state: str, error: str) -> RedirectResponse:
+    if error or not code:
+        return RedirectResponse("/login?error=annule")
+    try:
+        who = await auth.exchange(code, state)
+    except auth.AuthError as exc:
+        log.warning("connexion Google échouée : %s", exc)
+        return RedirectResponse("/login?error=erreur")
+    if not auth.is_allowed(who["email"]):
+        log.warning("connexion refusée pour %s (compte non autorisé)", who["email"])
+        return RedirectResponse("/login?error=refuse")
+    resp = RedirectResponse(BASE_URL + "/", status_code=302)
+    resp.set_cookie(value=auth.make_session(**who), **auth.cookie_kwargs())
+    return resp
+
+
+@app.get("/api/auth/logout")
+async def auth_logout() -> RedirectResponse:
+    resp = RedirectResponse("/login", status_code=302)
+    resp.delete_cookie(auth.COOKIE, path="/")
+    return resp
+
+
+@app.get("/api/me")
+async def me(request: Request) -> dict:
+    """Qui est connecté, pour l'avatar de la barre latérale."""
+    user = current_user(request) or {}
+    return {"email": user.get("email", ""), "name": user.get("name", ""), "picture": user.get("picture", ""),
+            "session": bool(user), "local": _is_local(request), "allowed": sorted(auth.allowed_emails())}
 
 
 @app.get("/api/sectors")
@@ -396,6 +480,8 @@ async def gmail_connect() -> RedirectResponse:
 
 @app.get("/api/gmail/callback")
 async def gmail_callback(code: str = "", state: str = "", error: str = "") -> RedirectResponse:
+    if auth.is_login_state(state):   # même adresse de retour pour les deux flux Google
+        return await _login_callback(code, state, error)
     if error or not code:
         return RedirectResponse(f"{BASE_URL}/#/reglages?gmail=refus")
     try:

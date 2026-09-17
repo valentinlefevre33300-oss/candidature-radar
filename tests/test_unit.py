@@ -371,6 +371,25 @@ check(all(c.inferred and c.pattern_used for c in produced), "chaque adresse dedu
 check(all(c.source_url.startswith("(deduit") for c in produced), "la provenance indique la deduction")
 
 # --------------------------------------------------------------------------
+print("\n# Connexion Google : sessions signees, liste d'acces")
+from app import auth as _auth
+_sess = _auth.make_session("Quelqu.Un@Example.org", "Quelqu'un")
+_read = _auth.read_session(_sess)
+check(_read is not None and _read["email"] == "quelqu.un@example.org", "session relue, adresse normalisee en minuscules")
+check(_auth.read_session(_sess[:-6] + "abcdef") is None, "signature alteree : session refusee")
+check(_auth.read_session(_sess.split(".")[0] + ".") is None, "signature vide : session refusee")
+check(_auth.read_session(None) is None and _auth.read_session("") is None, "pas de cookie : pas de session")
+_old = _auth._b64(b'{"email":"x@y.z","exp":1}')
+import hmac as _hmac, hashlib as _hashlib
+_sig = _hmac.new(_auth._secret(), _old.encode(), _hashlib.sha256).hexdigest()
+check(_auth.read_session(f"{_old}.{_sig}") is None, "session expiree : refusee meme bien signee")
+check(_auth.is_login_state("login:abc") and not _auth.is_login_state("gmailstate"), "le state distingue le flux de connexion du flux Gmail")
+check("openid" in _auth.SCOPES and not any("gmail" in sc for sc in _auth.SCOPES), "la connexion ne demande que l'identite, pas la boite")
+_allowed = _auth.allowed_emails()
+check(all(e == e.lower() for e in _allowed), "liste d'acces en minuscules")
+check(not _auth.is_allowed("") and not _auth.is_allowed(None), "adresse vide jamais autorisee")
+
+# --------------------------------------------------------------------------
 print("\n" + "=" * 62)
 if FAILURES:
     print(f"{len(FAILURES)} ECHEC(S) :")

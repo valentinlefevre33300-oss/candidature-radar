@@ -6,6 +6,7 @@ export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp
 
 export async function api(url, opts = {}) {
   const res = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...opts });
+  if (res.status === 401) { location.href = '/login'; throw new Error('Connexion requise'); }
   if (!res.ok) { let d = ''; try { d = (await res.json()).detail; } catch {} throw new Error(typeof d === 'string' && d ? d : res.statusText); }
   return res.status === 204 ? null : res.json();
 }

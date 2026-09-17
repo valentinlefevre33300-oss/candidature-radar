@@ -62,3 +62,8 @@ DRY_RUN = os.getenv("CR_DRY_RUN", "0") == "1"
 # accepté — indispensable des qu'on ecoute sur le reseau, l'outil envoie des mails.
 APP_PASSWORD = os.getenv("CR_APP_PASSWORD", "")
 APP_USER = os.getenv("CR_APP_USER", "valentin")
+
+# Connexion Google : adresses autorisees en plus de la Gmail connectee (virgules).
+ALLOWED_EMAILS = os.getenv("CR_ALLOWED_EMAILS", "")
+# 1 = exiger la connexion meme depuis le poste local (utile pour tester la page).
+REQUIRE_LOGIN = os.getenv("CR_REQUIRE_LOGIN", "0") == "1"
