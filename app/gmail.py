@@ -6,8 +6,10 @@ local (`data/gmail_token.json`) que seul ce poste lit.
 
 Portées demandées, et pourquoi :
   - gmail.send      : envoyer en ton nom, pièce jointe comprise ;
-  - gmail.metadata  : lire les EN-TÊTES des fils (jamais les corps) pour
-                      détecter qu'une personne a répondu.
+  - gmail.readonly  : lire les réponses — uniquement dans les fils des mails
+                      envoyés par l'outil, pour distinguer un refus d'un intérêt
+                      et écarter les réponses automatiques. Le reste de la boîte
+                      n'est jamais consulté.
 """
 from __future__ import annotations
 
@@ -32,7 +34,7 @@ AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
 API = "https://gmail.googleapis.com/gmail/v1/users/me"
 SCOPES = ("https://www.googleapis.com/auth/gmail.send",
-          "https://www.googleapis.com/auth/gmail.metadata")
+          "https://www.googleapis.com/auth/gmail.readonly")
 REDIRECT_PATH = "/api/gmail/callback"
 
 _pending_states: set[str] = set()
@@ -70,10 +72,21 @@ def is_connected() -> bool:
     return bool(token and token.get("refresh_token") and not token.get("expired"))
 
 
+def granted_scopes() -> set[str]:
+    token = _load() or {}
+    return set(str(token.get("scope") or "").split())
+
+
+def missing_scopes() -> list[str]:
+    """Portées demandées par cette version mais absentes de l'autorisation en place."""
+    granted = granted_scopes()
+    return [s for s in SCOPES if granted and s not in granted]
+
+
 def needs_reconnect() -> bool:
-    """L'autorisation a existé mais Google ne la renouvelle plus (7 jours en mode test)."""
+    """Autorisation expirée (7 jours en mode test) ou incomplète (nouvelle portée)."""
     token = _load()
-    return bool(token and token.get("expired"))
+    return bool(token and (token.get("expired") or missing_scopes()))
 
 
 def connected_email() -> str | None:
@@ -161,12 +174,20 @@ async def _access_token(client: httpx.AsyncClient) -> str:
 
 def build_message(*, sender: str, sender_name: str, to: str, subject: str,
                   text: str, html: str | None = None,
-                  attachments: list[tuple[str, bytes]] | None = None) -> EmailMessage:
-    """Construit un mail multipart (texte + HTML) avec pièces jointes."""
+                  attachments: list[tuple[str, bytes]] | None = None,
+                  in_reply_to: str | None = None) -> EmailMessage:
+    """Construit un mail multipart (texte + HTML) avec pièces jointes.
+
+    `in_reply_to` (Message-ID RFC du mail d'origine) fait de ce message une
+    réponse dans le même fil, côté Gmail comme chez le destinataire.
+    """
     msg = EmailMessage()
     msg["From"] = formataddr((sender_name, sender)) if sender_name else sender
     msg["To"] = to
     msg["Subject"] = subject
+    if in_reply_to:
+        msg["In-Reply-To"] = in_reply_to
+        msg["References"] = in_reply_to
     msg.set_content(text)
     if html:
         msg.add_alternative(html, subtype="html")
@@ -177,12 +198,15 @@ def build_message(*, sender: str, sender_name: str, to: str, subject: str,
     return msg
 
 
-async def send(message: EmailMessage) -> tuple[str, str]:
-    """Envoie le message. Renvoie (id du message, id du fil) côté Gmail."""
+async def send(message: EmailMessage, thread_id: str | None = None) -> tuple[str, str]:
+    """Envoie le message (dans un fil existant si `thread_id`). Renvoie (id message, id fil)."""
     raw = base64.urlsafe_b64encode(message.as_bytes()).decode("ascii")
+    body: dict = {"raw": raw}
+    if thread_id:
+        body["threadId"] = thread_id
     async with httpx.AsyncClient(timeout=40) as client:
         access = await _access_token(client)
-        resp = await client.post(f"{API}/messages/send", json={"raw": raw},
+        resp = await client.post(f"{API}/messages/send", json=body,
                                  headers={"Authorization": f"Bearer {access}"})
         if resp.status_code != 200:
             raise GmailError(f"envoi refusé ({resp.status_code}) : {resp.text[:300]}")
@@ -190,21 +214,98 @@ async def send(message: EmailMessage) -> tuple[str, str]:
         return data.get("id", ""), data.get("threadId", "")
 
 
-# --------------------------------------------------------------- réponses ---
-
-async def thread_has_reply(thread_id: str, own_email: str) -> bool:
-    """Le fil contient-il un message d'un autre expéditeur que nous ?"""
+async def message_rfc_id(message_id: str) -> str | None:
+    """Le Message-ID RFC d'un mail envoyé, pour y répondre dans le même fil."""
     async with httpx.AsyncClient(timeout=20) as client:
         access = await _access_token(client)
-        resp = await client.get(f"{API}/threads/{thread_id}",
-                                params={"format": "metadata", "metadataHeaders": "From"},
+        resp = await client.get(f"{API}/messages/{message_id}",
+                                params={"format": "metadata", "metadataHeaders": "Message-ID"},
+                                headers={"Authorization": f"Bearer {access}"})
+        if resp.status_code != 200:
+            return None
+        for header in resp.json().get("payload", {}).get("headers", []):
+            if header.get("name", "").lower() == "message-id":
+                return header.get("value")
+    return None
+
+
+# --------------------------------------------------------------- réponses ---
+
+def _header(message: dict, name: str) -> str:
+    for header in message.get("payload", {}).get("headers", []):
+        if header.get("name", "").lower() == name.lower():
+            return header.get("value", "")
+    return ""
+
+
+def _decode(data: str) -> str:
+    try:
+        return base64.urlsafe_b64decode(data + "=" * (-len(data) % 4)).decode("utf-8", errors="replace")
+    except Exception:
+        return ""
+
+
+def _body_text(payload: dict) -> str:
+    """Texte d'un message : la partie text/plain, sinon le HTML dépouillé."""
+    plain, html_part = "", ""
+
+    def walk(part: dict) -> None:
+        nonlocal plain, html_part
+        mime = part.get("mimeType", "")
+        data = (part.get("body") or {}).get("data")
+        if data and mime == "text/plain" and not plain:
+            plain = _decode(data)
+        elif data and mime == "text/html" and not html_part:
+            html_part = _decode(data)
+        for child in part.get("parts") or []:
+            walk(child)
+
+    walk(payload)
+    if plain.strip():
+        return plain
+    import re as _re
+    text = _re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", html_part, flags=_re.S | _re.I)
+    text = _re.sub(r"<br\s*/?>|</p>|</div>", "\n", text, flags=_re.I)
+    text = _re.sub(r"<[^>]+>", " ", text)
+    return html_lib_unescape(text)
+
+
+def html_lib_unescape(text: str) -> str:
+    import html as _html
+    return _html.unescape(text)
+
+
+async def thread_replies(thread_id: str, own_email: str) -> list[dict]:
+    """Les messages du fil qui ne viennent pas de nous : [{id, from, date, text}].
+
+    Lit le fil d'UN mail envoyé par l'outil — c'est la seule lecture faite
+    dans la boîte.
+    """
+    async with httpx.AsyncClient(timeout=30) as client:
+        access = await _access_token(client)
+        resp = await client.get(f"{API}/threads/{thread_id}", params={"format": "full"},
                                 headers={"Authorization": f"Bearer {access}"})
         if resp.status_code != 200:
             log.debug("lecture du fil %s impossible : %s", thread_id, resp.text[:120])
-            return False
-        own = own_email.lower()
-        for message in resp.json().get("messages", []):
-            for header in message.get("payload", {}).get("headers", []):
-                if header.get("name", "").lower() == "from" and own not in header.get("value", "").lower():
-                    return True
-    return False
+            return []
+    own = own_email.lower()
+    replies: list[dict] = []
+    for message in resp.json().get("messages", []):
+        sender = _header(message, "From")
+        if not sender or own in sender.lower():
+            continue
+        replies.append({
+            "id": message.get("id"),
+            "from": sender,
+            "date": message.get("internalDate"),
+            "auto": bool(_header(message, "Auto-Submitted") and
+                         _header(message, "Auto-Submitted").lower() != "no")
+                    or bool(_header(message, "X-Autoreply")) or bool(_header(message, "X-Autorespond")),
+            "text": _body_text(message.get("payload") or {}),
+            "snippet": message.get("snippet", ""),
+        })
+    return replies
+
+
+async def thread_has_reply(thread_id: str, own_email: str) -> bool:
+    return bool(await thread_replies(thread_id, own_email))

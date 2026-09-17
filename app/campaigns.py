@@ -213,8 +213,9 @@ def resume(campaign_id: int) -> dict:
 
 def quota_state() -> dict:
     today = datetime.now(timezone.utc)
-    month_sent = db.sent_since(today.strftime("%Y-%m"))
-    day_sent = db.sent_since(today.strftime("%Y-%m-%d"))
+    # Les relances comptent comme des envois : même boîte, même réputation.
+    month_sent = db.sent_since(today.strftime("%Y-%m")) + db.count_events("relance", today.strftime("%Y-%m"))
+    day_sent = db.sent_since(today.strftime("%Y-%m-%d")) + db.count_events("relance", today.strftime("%Y-%m-%d"))
     reason = None
     if month_sent >= MONTHLY_CAP:
         reason = "plafond mensuel atteint"
@@ -396,22 +397,125 @@ async def sender_loop() -> None:
 # --------------------------------------------------------------- réponses ---
 
 async def sync_replies() -> int:
-    """Marque « a répondu » les candidatures dont le fil Gmail contient une réponse."""
+    """Lit les réponses reçues dans les fils des mails envoyés et les classe.
+
+    Une réponse automatique d'absence ne compte pas comme une réponse : la
+    candidature reste « envoyée » et pourra être relancée.
+    """
     if dry_run() or not gmail.is_connected():
         return 0
     own = gmail.connected_email() or ""
     found = 0
     for application in db.pending_reply_checks():
         try:
-            if await gmail.thread_has_reply(application["gmail_thread_id"], own):
-                db.update_application(application["id"], status="repondu", replied_at=_now())
-                db.add_event("reponse", application.get("company_name") or application["email"],
-                             campaign_id=application["campaign_id"], application_id=application["id"])
-                found += 1
+            replies = await gmail.thread_replies(application["gmail_thread_id"], own)
         except Exception as exc:
-            log.debug("vérification de réponse impossible : %s", exc)
+            log.debug("lecture des réponses impossible : %s", exc)
+            continue
+        if not replies:
+            await asyncio.sleep(0.3)
+            continue
+        latest = replies[-1]
+        if latest.get("id") and latest["id"] == application.get("last_reply_id"):
+            continue   # déjà vue (réponse automatique déjà classée)
+        substantive = [r for r in replies if not r.get("auto")]
+        target = substantive[-1] if substantive else latest
+        text = compose.strip_quoted(target.get("text") or target.get("snippet") or "")
+        kind, summary = await compose.classify_reply(text)
+        if not substantive or kind == "absence":
+            db.update_application(application["id"], reply_kind="absence", reply_excerpt=text[:400],
+                                  last_reply_id=latest.get("id"))
+            await asyncio.sleep(0.3)
+            continue
+        db.update_application(application["id"], status="repondu", replied_at=_now(), reply_kind=kind,
+                              reply_excerpt=(summary or text)[:400], last_reply_id=latest.get("id"))
+        db.add_event("reponse", f"{application.get('company_name') or application['email']} — "
+                     f"{compose.KIND_LABELS.get(kind, kind)}" + (f" : {summary}" if summary else ""),
+                     campaign_id=application["campaign_id"], application_id=application["id"])
+        found += 1
         await asyncio.sleep(0.3)
     return found
+
+
+# ---------------------------------------------------------------- relances ---
+
+FOLLOWUP_AFTER_DAYS = 7
+FOLLOWUP_AFTER_OPEN_DAYS = 5
+MAX_FOLLOWUPS = 1
+
+
+def followup_candidates() -> list[dict]:
+    return db.followup_candidates(FOLLOWUP_AFTER_DAYS, FOLLOWUP_AFTER_OPEN_DAYS, MAX_FOLLOWUPS)
+
+
+async def prepare_followup(application_id: int) -> dict:
+    """Rédige la relance sans l'envoyer : à relire, retoucher, puis valider."""
+    application = db.get_application(application_id)
+    if application is None:
+        raise KeyError(application_id)
+    campaign = db.get_campaign(application["campaign_id"]) or {}
+    subject, body = await compose.followup_text(application, campaign, db.all_settings())
+    return {"application_id": application_id, "to": application["email"], "subject": subject,
+            "body_text": body, "company_name": application.get("company_name")}
+
+
+async def send_followup(application_id: int, subject: str | None = None,
+                        body_text: str | None = None) -> dict:
+    """Envoie la relance dans le fil Gmail d'origine, sous les mêmes quotas."""
+    application = db.get_application(application_id)
+    if application is None:
+        raise KeyError(application_id)
+    if application["status"] not in ("envoye", "ouvert"):
+        raise ValueError("cette candidature a déjà reçu une réponse ou n'est pas partie")
+    if (application.get("followups") or 0) >= MAX_FOLLOWUPS:
+        raise ValueError("relance déjà envoyée : on n'insiste pas deux fois")
+    if not quota_state()["can_send"]:
+        raise ValueError(f"quota : {quota_state()['reason']}")
+    if not subject or not body_text:
+        prepared = await prepare_followup(application_id)
+        subject = subject or prepared["subject"]
+        body_text = body_text or prepared["body_text"]
+    settings = db.all_settings()
+
+    if dry_run():
+        db.update_application(application_id, followups=(application.get("followups") or 0) + 1,
+                              last_followup_at=_now())
+        db.add_event("relance", f"{application.get('company_name')} (simulation)",
+                     campaign_id=application["campaign_id"], application_id=application_id)
+        return {"ok": True, "simulation": True}
+
+    if not gmail.is_connected():
+        raise ValueError("Gmail n'est pas connecté")
+    in_reply_to = await gmail.message_rfc_id(application["gmail_message_id"]) \
+        if application.get("gmail_message_id") not in (None, "simulation") else None
+    message = gmail.build_message(
+        sender=gmail.connected_email() or "", sender_name=settings.get("sender_name") or "",
+        to=application["email"], subject=subject, text=body_text,
+        html=compose.to_html(body_text), in_reply_to=in_reply_to)
+    await gmail.send(message, thread_id=application.get("gmail_thread_id") or None)
+    db.update_application(application_id, followups=(application.get("followups") or 0) + 1,
+                          last_followup_at=_now())
+    db.add_event("relance", application.get("company_name") or application["email"],
+                 campaign_id=application["campaign_id"], application_id=application_id)
+    return {"ok": True, "simulation": False}
+
+
+def outcomes() -> dict:
+    """Tout ce que le tableau de bord affiche, en une réponse."""
+    month = datetime.now(timezone.utc).strftime("%Y-%m")
+    return {
+        "totals": db.outcome_totals(),
+        "month": db.outcome_totals(month),
+        "by_campaign": db.outcomes_by_campaign(),
+        "days": db.sends_by_day(14),
+        "replies": db.recent_replies(20),
+        "followups": followup_candidates(),
+        "quota": quota_state(),
+        "gmail": {"connected": gmail.is_connected(), "needs_reconnect": gmail.needs_reconnect(),
+                  "missing_scopes": gmail.missing_scopes(), "email": gmail.connected_email()},
+        "rules": {"after_days": FOLLOWUP_AFTER_DAYS, "after_open_days": FOLLOWUP_AFTER_OPEN_DAYS,
+                  "max_followups": MAX_FOLLOWUPS},
+    }
 
 
 async def reply_loop() -> None:

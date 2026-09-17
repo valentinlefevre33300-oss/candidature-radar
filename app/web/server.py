@@ -310,6 +310,7 @@ async def settings_get() -> dict:
         "cv_name": Path(values["cv_path"]).name if values.get("cv_path") else None,
         "gmail": {"configured": gmail.configured(), "connected": gmail.is_connected(),
                   "needs_reconnect": gmail.needs_reconnect(), "email": gmail.connected_email(),
+                  "missing_scopes": gmail.missing_scopes(),
                   "redirect_uri": BASE_URL + gmail.REDIRECT_PATH},
         "claude": compose.claude_available(),
         "pixel": bool(PUBLIC_URL),
@@ -574,6 +575,64 @@ async def campaigns_followups(campaign_id: int) -> list[dict]:
 @app.post("/api/campaigns/{campaign_id}/sync")
 async def campaigns_sync(campaign_id: int) -> dict:
     return {"replies": await engine.sync_replies()}
+
+
+# ------------------------------------------------- tableau de bord & relances ---
+
+@app.get("/api/outcomes")
+async def outcomes() -> dict:
+    return engine.outcomes()
+
+
+@app.post("/api/replies/sync")
+async def replies_sync() -> dict:
+    if not gmail.is_connected():
+        raise HTTPException(status_code=400, detail="Gmail n'est pas connecté")
+    if gmail.missing_scopes():
+        raise HTTPException(status_code=400, detail="Reconnecte ton Gmail : la lecture des réponses "
+                                                    "demande une nouvelle permission")
+    return {"replies": await engine.sync_replies()}
+
+
+class ReplyKindPayload(BaseModel):
+    reply_kind: str
+
+
+@app.patch("/api/applications/{application_id}/reply")
+async def application_reply_kind(application_id: int, payload: ReplyKindPayload) -> dict:
+    if payload.reply_kind not in db.REPLY_KINDS:
+        raise HTTPException(status_code=400, detail="Nature de réponse inconnue")
+    if db.get_application(application_id) is None:
+        raise HTTPException(status_code=404, detail="Candidature inconnue")
+    db.update_application(application_id, reply_kind=payload.reply_kind)
+    return {"ok": True}
+
+
+class FollowupPayload(BaseModel):
+    subject: str | None = None
+    body_text: str | None = None
+
+
+@app.post("/api/applications/{application_id}/followup/preview")
+async def followup_preview(application_id: int) -> dict:
+    try:
+        return await engine.prepare_followup(application_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Candidature inconnue")
+
+
+@app.post("/api/applications/{application_id}/followup")
+async def followup_send(application_id: int, payload: FollowupPayload) -> dict:
+    try:
+        return await engine.send_followup(application_id, payload.subject, payload.body_text)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Candidature inconnue")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except gmail.GmailNotConnected as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except gmail.GmailError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
 
 
 @app.get("/api/applications/{application_id}")

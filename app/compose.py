@@ -287,6 +287,131 @@ async def claude_parts(context: dict[str, str], application: dict, profile: str,
     return opening, hook
 
 
+# --------------------------------------------------------------- réponses ---
+
+KIND_LABELS = {"refus": "Refus", "interet": "Intérêt", "question": "Question",
+               "absence": "Absence", "autre": "Autre"}
+
+_QUOTE_START = re.compile(
+    r"^(?:>|Le .{3,120}a (?:écrit|ecrit) ?:|On .{3,120}wrote ?:|-{2,}\s*(?:Original|Message d'origine|Forwarded)"
+    r"|De ?:\s|From ?:\s|Envoyé ?:\s|Sent ?:\s|_{5,}|\*{5,})", re.IGNORECASE)
+
+
+def strip_quoted(text: str, limit: int = 600) -> str:
+    """Le texte propre d'une réponse : sans les lignes citées du mail d'origine."""
+    kept: list[str] = []
+    for line in (text or "").replace("\r", "").split("\n"):
+        if _QUOTE_START.match(line.strip()):
+            break
+        kept.append(line.rstrip())
+    cleaned = re.sub(r"\n{3,}", "\n\n", "\n".join(kept)).strip()
+    return cleaned[:limit]
+
+
+_ABSENCE = ("absent", "absence", "out of office", "conge", "de retour le", "back on", "auto-reply",
+            "reponse automatique", "automatic reply", "je suis actuellement en")
+_REFUS = ("malheureusement", "ne donnerons pas suite", "ne pouvons pas donner suite", "pas de poste",
+          "aucun poste", "pas d'opportunit", "pas de besoin", "pas de recrutement", "ne recrutons pas",
+          "n'a pas ete retenue", "ne correspond pas", "ne pourrons pas", "pas en mesure", "not hiring",
+          "unfortunately", "not a fit", "no open position", "regret", "pas de place", "n'avons pas")
+_INTERET = ("entretien", "echanger", "echange", "appel", "visio", "disponibilit", "rencontrer",
+            "rendez-vous", "interesse", "interessant", "call", "interview", "discuter", "creneau",
+            "avec plaisir", "volontiers")
+
+
+def classify_reply_rules(text: str) -> str:
+    """Classement par règles : absence > refus > intérêt > question > autre.
+
+    Le refus passe avant l'intérêt : un refus poli propose souvent
+    « d'échanger à l'avenir », ce qui n'en fait pas une bonne nouvelle.
+    """
+    from .domains import _norm
+    t = _norm(text)
+    if any(k in t for k in _ABSENCE):
+        return "absence"
+    if any(k in t for k in _REFUS):
+        return "refus"
+    if any(k in t for k in _INTERET):
+        return "interet"
+    if "?" in t:
+        return "question"
+    return "autre"
+
+
+SYSTEM_CLASSIFY = """Tu lis la réponse d'une entreprise à une candidature spontanée et tu la classes.
+
+- refus : pas de suite, pas de poste, candidature non retenue (même formulé poliment).
+- interet : proposition d'échange ou d'entretien, demande de disponibilités, curiosité manifeste.
+- question : demande d'informations (CV, prétentions, disponibilité, précisions) sans décision.
+- absence : réponse automatique d'absence ou de congé.
+- autre : accusé de réception, transfert à un collègue, hors sujet.
+
+Réponds exactement sous la forme :
+CATEGORIE: <refus|interet|question|absence|autre>
+RESUME: <une phrase factuelle, 20 mots au plus, sans interprétation>"""
+
+
+async def classify_reply(text: str) -> tuple[str, str]:
+    """(catégorie, résumé) d'une réponse. Règles seules sans clé API."""
+    fallback = classify_reply_rules(text)
+    if not claude_available() or not text.strip():
+        return fallback, ""
+    try:
+        out = await _ask(SYSTEM_CLASSIFY, "Réponse reçue :\n" + strip_quoted(text, 1500) + "\n\nClasse-la.", 150)
+    except Exception as exc:
+        log.warning("classement de la réponse indisponible : %s", exc)
+        return fallback, ""
+    kind = re.search(r"CATEGORIE\s*:\s*(refus|interet|question|absence|autre)", out, re.I)
+    summary = re.search(r"RESUME\s*:\s*(.+)", out, re.I)
+    return (kind.group(1).lower() if kind else fallback), (_clean(summary.group(1)) if summary else "")
+
+
+# ---------------------------------------------------------------- relance ---
+
+FOLLOWUP_BODY = """{salutation}
+
+Je me permets de revenir vers vous au sujet de ma candidature spontanée pour un poste de {poste}, envoyée le {date}. Je reste pleinement disponible pour en échanger, par téléphone ou en visio si c'est plus simple pour vous.
+
+Bien cordialement,
+{signature}"""
+
+SYSTEM_FOLLOWUP = """Tu rédiges une relance courte après une candidature spontanée restée sans réponse : trois phrases au plus, 60 mots au plus, première personne, vouvoiement, ton sobre — ni reproche, ni insistance, ni excuse. Rappelle en une phrase le poste visé et, si une fiche enjeux est fournie, un élément concret de ce que fait l'entreprise ; propose un échange court. Uniquement les faits fournis. Pas de salutation ni de formule finale : elles existent déjà. Renvoie le paragraphe seul."""
+
+
+def _fmt_day(iso: str | None) -> str:
+    try:
+        from datetime import datetime
+        return datetime.fromisoformat(iso).astimezone().strftime("%d/%m/%Y")
+    except Exception:
+        return "récemment"
+
+
+async def followup_text(application: dict, campaign: dict, settings: dict) -> tuple[str, str]:
+    """(objet, corps) d'une relance, dans le fil du mail d'origine."""
+    context = build_context(application, campaign, settings)
+    context["date"] = _fmt_day(application.get("sent_at"))
+    body = render(FOLLOWUP_BODY, context)
+    if claude_available():
+        who = " ".join(p for p in (application.get("first_name"), application.get("last_name")) if p)
+        facts = [f"Poste visé : {context['poste']}", f"Entreprise : {context['entreprise']}",
+                 f"Destinataire : {who or 'inconnu'} — {application.get('role_title') or 'fonction inconnue'}",
+                 f"Mail envoyé le : {context['date']}",
+                 f"Le mail a été ouvert : {'oui' if application.get('opens') else 'non'}"]
+        if application.get("company_brief"):
+            facts.append(f"Fiche enjeux :\n{application['company_brief']}")
+        facts += ["", "Profil du candidat :", profile_text(settings).strip() or "(non renseigné)"]
+        try:
+            paragraph = _clean(await _ask(SYSTEM_FOLLOWUP, "\n".join(facts) + "\n\nRédige la relance.", 300))
+            if len(paragraph) > 40:
+                body = render("{salutation}\n\n{relance}\n\nBien cordialement,\n{signature}",
+                              {**context, "relance": paragraph})
+        except Exception as exc:
+            log.warning("relance Claude indisponible : %s", exc)
+    original = application.get("subject") or render(campaign.get("subject_tpl") or DEFAULT_SUBJECT, context)
+    subject = original if original.lower().startswith("re:") else f"Re: {original}"
+    return subject, body
+
+
 # ----------------------------------------------------------------- profil ---
 
 def cv_text(path: str | None, limit: int = 2500) -> str:

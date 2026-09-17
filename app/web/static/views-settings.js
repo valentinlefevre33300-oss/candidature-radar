@@ -21,7 +21,8 @@ export async function renderSettings() {
         <h3>Gmail</h3>
         <div class="muted" style="font-size:13px;margin:4px 0 16px">Les mails partent depuis ta boîte, avec ton CV en pièce jointe. On lit aussi les en-têtes de tes fils pour détecter les réponses — jamais le contenu.</div>
         ${g.connected ? `
-          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><span class="mono biz sm">✓</span><div><b>${esc(g.email || 'Compte connecté')}</b><div class="muted" style="font-size:12.5px">envoi + lecture des en-têtes</div></div>
+          ${g.missing_scopes && g.missing_scopes.length ? `<div class="banner" style="margin-bottom:14px"><span><b>Nouvelle permission</b> — cette version lit les réponses reçues dans les fils de ses propres mails (pour distinguer un refus d’un intérêt). <a href="/api/gmail/connect" class="accent">Reconnecter mon Gmail</a> pour l’accorder.</span></div>` : ''}
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><span class="mono biz sm">✓</span><div><b>${esc(g.email || 'Compte connecté')}</b><div class="muted" style="font-size:12.5px">envoi + lecture des réponses dans les fils envoyés</div></div>
           <span style="flex:1"></span><button class="btn btn-white btn-sm" id="gmDisc">Déconnecter</button></div>
           <div style="display:flex;gap:10px;align-items:center;margin-top:16px;flex-wrap:wrap">
             <input class="input on-paper" id="gmTestJob" placeholder="Poste pour le test" value="développeur Python" style="max-width:240px;padding:8px 12px">

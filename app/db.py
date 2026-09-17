@@ -9,7 +9,7 @@ from __future__ import annotations
 import csv
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator
 
@@ -246,7 +246,14 @@ def init_db(path: Path | None = None) -> None:
         _upgrade_outreach(conn)
         _add_missing_columns(conn, "companies", {"tagline": "TEXT", "about": "TEXT", "brief": "TEXT"})
         _add_missing_columns(conn, "contacts", {"is_manager": "INTEGER DEFAULT 0"})
-        _add_missing_columns(conn, "applications", {"company_about": "TEXT", "company_brief": "TEXT"})
+        _add_missing_columns(conn, "applications", {
+            "company_about": "TEXT", "company_brief": "TEXT",
+            "reply_kind": "TEXT",            # refus | interet | question | absence | autre
+            "reply_excerpt": "TEXT",         # début de la réponse, sans le texte cité
+            "last_reply_id": "TEXT",         # dernier message lu dans le fil
+            "followups": "INTEGER DEFAULT 0",
+            "last_followup_at": "TEXT",
+        })
 
 
 def start_run(job_title: str, sectors: str, department: str | None, params: str) -> int:
@@ -551,7 +558,9 @@ def add_applications(campaign_id: int, rows: list[dict]) -> int:
 
 def update_application(application_id: int, **fields) -> None:
     allowed = set(APPLICATION_FIELDS) | {"sent_at", "gmail_message_id", "gmail_thread_id",
-                                         "opens", "last_open_at", "replied_at", "error"}
+                                         "opens", "last_open_at", "replied_at", "error",
+                                         "reply_kind", "reply_excerpt", "last_reply_id",
+                                         "followups", "last_followup_at"}
     changes = {k: v for k, v in fields.items() if k in allowed}
     if not changes:
         return
@@ -642,6 +651,7 @@ def pending_reply_checks(limit: int = 40) -> list[dict]:
     with connect() as conn:
         return [dict(r) for r in conn.execute(
             "SELECT * FROM applications WHERE gmail_thread_id IS NOT NULL "
+            "AND gmail_message_id != 'simulation' "
             "AND status IN ('envoye', 'ouvert') ORDER BY sent_at DESC LIMIT ?", (limit,))]
 
 
@@ -652,6 +662,12 @@ def add_event(kind: str, detail: str = "", campaign_id: int | None = None,
     with connect() as conn:
         conn.execute("INSERT INTO events (campaign_id, application_id, kind, at, detail) "
                      "VALUES (?,?,?,?,?)", (campaign_id, application_id, kind, _now(), detail))
+
+
+def count_events(kind: str, prefix: str) -> int:
+    with connect() as conn:
+        return int(conn.execute("SELECT COUNT(*) FROM events WHERE kind=? AND at LIKE ?",
+                                (kind, prefix + "%")).fetchone()[0])
 
 
 def list_events(campaign_id: int | None = None, limit: int = 50) -> list[dict]:
@@ -667,6 +683,94 @@ def list_events(campaign_id: int | None = None, limit: int = 50) -> list[dict]:
                 "LEFT JOIN applications a ON a.id = e.application_id "
                 "WHERE e.campaign_id=? ORDER BY e.id DESC LIMIT ?", (campaign_id, limit))
         return [dict(r) for r in rows]
+
+
+REPLY_KINDS = ("refus", "interet", "question", "absence", "autre")
+
+
+def followup_candidates(days_sent: int = 7, days_opened: int = 5, max_followups: int = 1,
+                        limit: int = 30) -> list[dict]:
+    """Candidatures sans réponse qui méritent une relance.
+
+    Après `days_opened` jours si le mail a été ouvert (la personne a vu, n'a
+    pas répondu), après `days_sent` jours sinon. Jamais sur un refus, jamais
+    au-delà de `max_followups`.
+    """
+    now = datetime.now(timezone.utc)
+    since_sent = (now - timedelta(days=days_sent)).isoformat(timespec="seconds")
+    since_open = (now - timedelta(days=days_opened)).isoformat(timespec="seconds")
+    with connect() as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT a.*, c.name AS campaign_name, c.job_title FROM applications a "
+            "JOIN campaigns c ON c.id = a.campaign_id "
+            "WHERE a.status IN ('envoye', 'ouvert') AND a.gmail_thread_id IS NOT NULL "
+            "AND COALESCE(a.followups, 0) < ? "
+            "AND ((a.opens > 0 AND a.sent_at <= ?) OR a.sent_at <= ?) "
+            "ORDER BY a.opens DESC, a.sent_at ASC LIMIT ?",
+            (max_followups, since_open, since_sent, limit))]
+
+
+def recent_replies(limit: int = 30) -> list[dict]:
+    with connect() as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT a.*, c.name AS campaign_name, c.job_title FROM applications a "
+            "JOIN campaigns c ON c.id = a.campaign_id "
+            "WHERE a.replied_at IS NOT NULL ORDER BY a.replied_at DESC LIMIT ?", (limit,))]
+
+
+def outcome_totals(month_prefix: str | None = None) -> dict:
+    """Envoyés, ouverts, réponses par nature, relances — en tout ou sur un mois."""
+    where, params = "", []
+    if month_prefix:
+        where, params = "WHERE sent_at LIKE ?", [month_prefix + "%"]
+    with connect() as conn:
+        row = conn.execute(
+            f"SELECT COUNT(*) FILTER (WHERE status IN ('envoye','ouvert','repondu')) AS sent, "
+            f"COUNT(*) FILTER (WHERE opens > 0) AS opened, "
+            f"COUNT(*) FILTER (WHERE replied_at IS NOT NULL) AS replied, "
+            f"COUNT(*) FILTER (WHERE reply_kind = 'refus') AS refus, "
+            f"COUNT(*) FILTER (WHERE reply_kind = 'interet') AS interet, "
+            f"COUNT(*) FILTER (WHERE reply_kind = 'question') AS question, "
+            f"COALESCE(SUM(followups), 0) AS followups, "
+            f"COUNT(*) FILTER (WHERE status = 'programme') AS scheduled, "
+            f"COUNT(*) FILTER (WHERE status = 'echec') AS failed "
+            f"FROM applications {where}", params).fetchone()
+        return dict(row)
+
+
+def outcomes_by_campaign() -> list[dict]:
+    with connect() as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT c.id, c.name, c.job_title, c.status, "
+            "COUNT(a.id) FILTER (WHERE a.status IN ('envoye','ouvert','repondu')) AS sent, "
+            "COUNT(a.id) FILTER (WHERE a.opens > 0) AS opened, "
+            "COUNT(a.id) FILTER (WHERE a.replied_at IS NOT NULL) AS replied, "
+            "COUNT(a.id) FILTER (WHERE a.reply_kind = 'refus') AS refus, "
+            "COUNT(a.id) FILTER (WHERE a.reply_kind = 'interet') AS interet, "
+            "COALESCE(SUM(a.followups), 0) AS followups "
+            "FROM campaigns c LEFT JOIN applications a ON a.campaign_id = c.id "
+            "GROUP BY c.id ORDER BY c.id DESC")]
+
+
+def sends_by_day(days: int = 14) -> list[dict]:
+    """Envois (et relances) par jour sur les derniers jours, pour la frise du tableau de bord."""
+    start = (datetime.now(timezone.utc) - timedelta(days=days - 1)).strftime("%Y-%m-%d")
+    with connect() as conn:
+        sent = {r["d"]: r["n"] for r in conn.execute(
+            "SELECT substr(sent_at, 1, 10) AS d, COUNT(*) AS n FROM applications "
+            "WHERE sent_at >= ? GROUP BY d", (start,))}
+        opened = {r["d"]: r["n"] for r in conn.execute(
+            "SELECT substr(last_open_at, 1, 10) AS d, COUNT(*) AS n FROM applications "
+            "WHERE last_open_at >= ? GROUP BY d", (start,))}
+        replied = {r["d"]: r["n"] for r in conn.execute(
+            "SELECT substr(replied_at, 1, 10) AS d, COUNT(*) AS n FROM applications "
+            "WHERE replied_at >= ? GROUP BY d", (start,))}
+    out = []
+    for i in range(days):
+        day = (datetime.now(timezone.utc) - timedelta(days=days - 1 - i)).strftime("%Y-%m-%d")
+        out.append({"day": day, "sent": sent.get(day, 0), "opened": opened.get(day, 0),
+                    "replied": replied.get(day, 0)})
+    return out
 
 
 def priority_followups(campaign_id: int, limit: int = 8) -> list[dict]:

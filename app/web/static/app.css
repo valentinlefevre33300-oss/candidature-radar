@@ -321,6 +321,27 @@ table.tbl .co small { display: block; color: var(--muted); font-weight: 400; fon
 .sector-row .nm { flex: 1; font-weight: 600; }
 .sector-row .ct { font-size: 12px; font-weight: 700; padding: 3px 9px; border-radius: 99px; background: var(--card); color: var(--muted); }
 
+/* ── Tableau de bord ─────────────────────────────────────────────────── */
+@media (min-width: 1000px) { .stats.six { grid-template-columns: repeat(6, 1fr); } .stats.six .stat { min-height: 118px; padding: 18px 20px; } .stats.six .stat .v { font-size: 32px; } }
+.stat.tone-data { background: var(--data); color: var(--data-ink); }
+.funnel { display: grid; gap: 12px; }
+.funnel .row { display: grid; grid-template-columns: 90px 1fr 96px; align-items: center; gap: 12px; }
+.funnel .lbl { font-size: 12.5px; font-weight: 600; color: var(--muted); text-transform: none; letter-spacing: 0; }
+.funnel .bar { height: 10px; background: var(--card-hover); border-radius: 99px; overflow: hidden; }
+.funnel .bar i { display: block; height: 100%; background: var(--logo-to); border-radius: 99px; min-width: 2px; transition: width .4s ease; }
+.funnel .val { font-size: 13px; text-align: right; font-variant-numeric: tabular-nums; }
+.days { display: flex; align-items: flex-end; gap: 4px; height: 84px; border-bottom: 1px solid var(--line); padding-bottom: 2px; }
+.days .d { flex: 1; position: relative; display: flex; flex-direction: column; justify-content: flex-end; height: 100%; }
+.days .d i { display: block; background: var(--logo-to); border-radius: 4px 4px 0 0; opacity: .85; transition: opacity .1s; }
+.days .d:hover i { opacity: 1; }
+.days .d .tooltip { display: none; position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); margin-bottom: 6px; background: var(--ink); color: #fff; font-size: 11px; font-weight: 600; padding: 5px 9px; border-radius: 6px; white-space: nowrap; z-index: 5; }
+.days .d:hover .tooltip { display: block; }
+select.kind { appearance: none; -webkit-appearance: none; border: 0; border-radius: 999px; cursor: pointer; padding: 6px 28px 6px 12px; font-size: 12px; font-weight: 700; letter-spacing: .04em; background-color: var(--card-hover); color: var(--muted); background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238b8ba7' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><path d='m6 9 6 6 6-6'/></svg>"); background-repeat: no-repeat; background-position: right 10px center; }
+select.kind.interet { background-color: var(--biz); color: var(--biz-ink); }
+select.kind.refus { background-color: #fde3e3; color: #a33; }
+select.kind.question { background-color: var(--tech); color: var(--tech-ink); }
+select.kind.absence { background-color: var(--ux); color: var(--ux-ink); }
+
 /* ── Toast (pilule noire, comme les tooltips) ─────────────────────────── */
 #toast { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%) translateY(10px); opacity: 0; z-index: 50; background: var(--ink); color: #fff; padding: 10px 18px; border-radius: 999px; font-weight: 600; font-size: 13px; box-shadow: var(--shadow-active); transition: all .2s; pointer-events: none; }
 #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }

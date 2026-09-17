@@ -335,6 +335,24 @@ body = _render(DEFAULT_BODY, {**_bc({"first_name": "Aude", "last_name": "B", "co
 check("Bonjour Aude B," in body and "OUV" in body and "ACC" in body and "{" not in body, "le gabarit rend salutation, ouverture et accroche")
 
 # --------------------------------------------------------------------------
+print("\n== Reponses : nettoyage, classement, relance ==")
+from app.compose import strip_quoted, classify_reply_rules, FOLLOWUP_BODY
+RAW = ("Bonjour,\nMalheureusement nous ne recrutons pas actuellement, mais n'hésitez pas à échanger plus tard.\n"
+       "Bonne continuation\n\nLe mar. 17 sept. 2026 à 10:02, Valentin <v@x.fr> a écrit :\n> Bonjour Aude,\n> Je me permets...")
+clean = strip_quoted(RAW)
+check("a écrit" not in clean and ">" not in clean and "Malheureusement" in clean, "le texte cite du mail d'origine est retire")
+check(classify_reply_rules(clean) == "refus", "un refus poli qui propose « d'echanger plus tard » reste un refus")
+check(classify_reply_rules("Merci pour votre message, seriez-vous disponible pour un échange téléphonique jeudi ?") == "interet",
+      "une proposition d'echange = interet")
+check(classify_reply_rules("Je suis absent du bureau jusqu'au 25 septembre, je vous répondrai à mon retour.") == "absence",
+      "un message d'absence n'est pas une reponse")
+check(classify_reply_rules("Pouvez-vous me préciser vos prétentions salariales ?") == "question", "une question = question")
+check(classify_reply_rules("Bien reçu, je transmets à ma collègue.") == "autre", "un accuse de reception = autre")
+check("{date}" in FOLLOWUP_BODY and "{poste}" in FOLLOWUP_BODY and "{signature}" in FOLLOWUP_BODY, "gabarit de relance complet")
+check("On Tue, Sep 17" not in strip_quoted("Sure, let's talk.\n\nOn Tue, Sep 17, 2026 at 10:02 AM V <v@x.fr> wrote:\n> Hi"),
+      "les citations en anglais sont retirees aussi")
+
+# --------------------------------------------------------------------------
 print("\n== Deduction plafonnee ==")
 crowded = Company(siren="2", name="BIGCO", domain="bigco.fr", headcount_code="32")
 crowded.directors = [

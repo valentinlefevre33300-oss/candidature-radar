@@ -1,13 +1,15 @@
 /* Point d'entrée : routeur, barre latérale, démarrage. */
 import { $, $$, api, state } from './core.js';
 import { renderSearch, renderRun, renderSuivi } from './views-search.js';
-import { renderDashboard, renderWizard, renderCampaign } from './views-campaigns.js';
+import { renderDashboard as renderCampaigns, renderWizard, renderCampaign } from './views-campaigns.js';
 import { renderSettings } from './views-settings.js';
+import { renderDashboard } from './views-dashboard.js';
 
 const ROUTES = [
+  [/^#\/dashboard/, () => renderDashboard(), 'dashboard'],
   [/^#\/campagnes\/nouvelle/, () => renderWizard(), 'campagnes'],
   [/^#\/campagnes\/(\d+)/, (m) => renderCampaign(+m[1]), 'campagnes'],
-  [/^#\/campagnes/, () => renderDashboard(), 'campagnes'],
+  [/^#\/campagnes/, () => renderCampaigns(), 'campagnes'],
   [/^#\/recherche/, () => renderSearch(), 'recherche'],
   [/^#\/run\/(\d+)/, (m) => renderRun(+m[1]), 'recherche'],
   [/^#\/suivi/, () => renderSuivi(), 'suivi'],

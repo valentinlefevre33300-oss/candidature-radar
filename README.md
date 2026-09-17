@@ -78,6 +78,12 @@ Puis <http://localhost:8010>. Quatre espaces :
   pour la première entreprise) → récap et lancement. Chaque campagne a sa page :
   complétion, journal, « à relancer en priorité » (les personnes qui ouvrent sans
   répondre), table des candidatures paginée avec statut, « voir le mail », LinkedIn.
+- **Tableau de bord** — envoyés, ouverts, réponses, et la nature des réponses
+  (**refus / intérêt / question**, classées par Claude ou par règles ; une réponse
+  automatique d'absence ne compte pas). Entonnoir, frise des 14 derniers jours, bilan
+  par campagne. **À relancer** : sans réponse après 7 jours (5 si le mail a été
+  ouvert), une relance rédigée est proposée ; tu la relis, tu l'envoies — dans le fil
+  du premier mail, une seule fois par personne, jamais sur un refus.
 - **Recherche** — le poste visé, une ou plusieurs villes (autocomplétion sur l'API
   géographique de l'État ; « agglomération » étend chaque ville à son intercommunalité),
   une taille d'entreprise (défaut 10–249, là où ça rend), des secteurs en pilules.
@@ -179,8 +185,9 @@ Pour les campagnes :
 | `CR_DRY_RUN` | `1` force la simulation quoi qu'il arrive (l'interrupteur des réglages fait la même chose sans redémarrer). |
 
 Le jeton Gmail est stocké dans `data/gmail_token.json` (ignoré par git). Portées
-demandées : `gmail.send` et `gmail.metadata` — envoyer, et lire les **en-têtes** des fils
-pour détecter les réponses. Jamais le contenu des mails.
+demandées : `gmail.send` et `gmail.readonly` — envoyer, et lire les réponses reçues
+**dans les fils des mails envoyés par l'outil**, pour les classer. Le reste de la boîte
+n'est jamais consulté ; le code qui lit un fil est dans `app/gmail.py`, une fonction.
 
 ## Tests
 
