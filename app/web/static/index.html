@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Candidature Radar</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --panel: #171a23;
+    --panel-2: #1e2230;
+    --border: #2a2f3d;
+    --text: #e6e8ee;
+    --muted: #949bab;
+    --accent: #5b8def;
+    --ok: #3fb950;
+    --warn: #d29922;
+    --bad: #f85149;
+    --radius: 10px;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f6f7f9; --panel: #fff; --panel-2: #f0f2f5; --border: #dfe3ea;
+      --text: #1b1f28; --muted: #626b7d;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.5 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  header {
+    padding: 20px 24px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
+  }
+  h1 { font-size: 19px; margin: 0; letter-spacing: -0.01em; }
+  header .sub { color: var(--muted); font-size: 13px; }
+  main { max-width: 1240px; margin: 0 auto; padding: 22px 24px 60px; }
+  .panel {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 18px; margin-bottom: 18px;
+  }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; }
+  label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px;
+          text-transform: uppercase; letter-spacing: .04em; }
+  input[type=text], input[type=number], select {
+    width: 100%; padding: 9px 11px; background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 7px; font-size: 14px; font-family: inherit;
+  }
+  input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  fieldset { border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; margin: 16px 0 0; }
+  legend { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; padding: 0 6px; }
+  .sectors { display: grid; grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); gap: 6px 14px; }
+  .sectors label { display: flex; align-items: center; gap: 7px; text-transform: none;
+                   letter-spacing: 0; font-size: 13.5px; color: var(--text); margin: 0; cursor: pointer; }
+  .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 16px; }
+  button {
+    background: var(--accent); color: #fff; border: 0; padding: 10px 18px;
+    border-radius: 7px; font-size: 14px; font-weight: 600; cursor: pointer; font-family: inherit;
+  }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.ghost { background: transparent; color: var(--text); border: 1px solid var(--border); font-weight: 500; }
+  .bar { height: 6px; background: var(--panel-2); border-radius: 99px; overflow: hidden; margin: 12px 0 8px; }
+  .bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+  #log {
+    font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 12.5px;
+    max-height: 190px; overflow-y: auto; color: var(--muted); white-space: pre-wrap;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { font-size: 11.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; }
+  tbody tr:hover { background: var(--panel-2); }
+  .score { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .email { font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+  .badge {
+    display: inline-block; padding: 1px 7px; border-radius: 99px; font-size: 11px;
+    font-weight: 600; border: 1px solid var(--border); white-space: nowrap;
+  }
+  .b-rh { background: rgba(63,185,80,.15); color: var(--ok); border-color: rgba(63,185,80,.35); }
+  .b-direction { background: rgba(91,141,239,.15); color: var(--accent); border-color: rgba(91,141,239,.35); }
+  .b-nominatif { background: rgba(210,153,34,.15); color: var(--warn); border-color: rgba(210,153,34,.35); }
+  .b-generique, .b-inconnu { background: var(--panel-2); color: var(--muted); }
+  .b-technique, .b-juridique, .b-commercial { background: var(--panel-2); color: var(--muted); opacity: .75; }
+  .flag { font-size: 11px; color: var(--warn); border: 1px dashed rgba(210,153,34,.5);
+          padding: 0 5px; border-radius: 4px; margin-left: 6px; }
+  .why { color: var(--muted); font-size: 12px; margin-top: 3px; }
+  .muted { color: var(--muted); }
+  .empty { text-align: center; padding: 40px; color: var(--muted); }
+  .note { font-size: 12.5px; color: var(--muted); margin-top: 10px; line-height: 1.6; }
+  a { color: var(--accent); }
+  .toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px;
+             flex-wrap: wrap; margin-bottom: 12px; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Candidature Radar</h1>
+  <span class="sub">Trouver a qui ecrire, sans passer par un formulaire ATS</span>
+</header>
+
+<main>
+  <section class="panel">
+    <div class="grid">
+      <div>
+        <label for="job">Poste vise</label>
+        <input type="text" id="job" placeholder="developpeur python" value="">
+      </div>
+      <div>
+        <label for="dept">Departement</label>
+        <input type="text" id="dept" placeholder="33" maxlength="3">
+      </div>
+      <div>
+        <label for="cp">Code postal</label>
+        <input type="text" id="cp" placeholder="33000" maxlength="5">
+      </div>
+      <div>
+        <label for="minh">Effectif min.</label>
+        <input type="number" id="minh" placeholder="10" min="0">
+      </div>
+      <div>
+        <label for="maxh">Effectif max.</label>
+        <input type="number" id="maxh" placeholder="250" min="0">
+      </div>
+      <div>
+        <label for="limit">Entreprises a explorer</label>
+        <input type="number" id="limit" value="25" min="1" max="200">
+      </div>
+    </div>
+
+    <fieldset>
+      <legend>Secteurs d'activite</legend>
+      <div class="sectors" id="sectors"></div>
+    </fieldset>
+
+    <div class="row">
+      <label style="display:flex;align-items:center;gap:7px;text-transform:none;letter-spacing:0;color:var(--text);margin:0;cursor:pointer">
+        <input type="checkbox" id="useSearch" checked> Chercher le site via un moteur si la deduction echoue
+      </label>
+      <label style="display:flex;align-items:center;gap:7px;text-transform:none;letter-spacing:0;color:var(--text);margin:0;cursor:pointer">
+        <input type="checkbox" id="smtp"> Sonder les adresses deduites en SMTP (lent, peu fiable)
+      </label>
+    </div>
+
+    <div class="row">
+      <button id="go">Lancer la recherche</button>
+      <span class="muted" id="hint">Choisissez au moins un secteur.</span>
+    </div>
+    <p class="note">
+      Les entreprises proviennent de l'annuaire officiel (base Sirene). Les dirigeants
+      y sont publies legalement. Les adresses sont collectees sur les sites publics des
+      entreprises, en respectant leur <code>robots.txt</code> et avec un debit limite.
+      Une adresse marquee <span class="flag">deduite</span> n'a jamais ete vue telle
+      quelle : elle est reconstituee depuis le motif d'adressage maison. Verifiez-la
+      avant d'ecrire.
+    </p>
+  </section>
+
+  <section class="panel hidden" id="progress">
+    <div class="toolbar">
+      <strong id="progressTitle">Recherche en cours</strong>
+      <span class="muted" id="counter"></span>
+    </div>
+    <div class="bar"><i id="barFill"></i></div>
+    <div id="log"></div>
+  </section>
+
+  <section class="panel hidden" id="results">
+    <div class="toolbar">
+      <div>
+        <strong id="resultCount"></strong>
+        <span class="muted" id="resultHint"></span>
+      </div>
+      <div class="row" style="margin:0">
+        <label style="display:flex;align-items:center;gap:7px;text-transform:none;letter-spacing:0;color:var(--text);margin:0;cursor:pointer">
+          <input type="checkbox" id="onlyGood" checked> Masquer les contacts peu pertinents
+        </label>
+        <button class="ghost" id="export">Exporter en CSV</button>
+      </div>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th style="width:56px">Score</th>
+          <th>Contact</th>
+          <th>Entreprise</th>
+          <th style="width:110px">Categorie</th>
+          <th style="width:90px">Suivi</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+    <div class="empty hidden" id="emptyState">
+      Aucun contact retenu. Elargissez le secteur, la zone geographique ou l'effectif.
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let runId = null;
+let rows = [];
+
+async function loadSectors() {
+  const list = await (await fetch('/api/sectors')).json();
+  $('sectors').innerHTML = list.map(s =>
+    `<label><input type="checkbox" value="${s.key}"> ${s.label}</label>`).join('');
+}
+
+function selectedSectors() {
+  return [...document.querySelectorAll('#sectors input:checked')].map(i => i.value);
+}
+
+function logLine(text) {
+  const el = $('log');
+  el.textContent += text + '\n';
+  el.scrollTop = el.scrollHeight;
+}
+
+function badge(category) {
+  const known = ['rh', 'direction', 'nominatif', 'generique', 'technique', 'juridique', 'commercial', 'inconnu'];
+  const cls = known.includes(category) ? category : 'inconnu';
+  return `<span class="badge b-${cls}">${category}</span>`;
+}
+
+function render() {
+  const onlyGood = $('onlyGood').checked;
+  const visible = onlyGood ? rows.filter(r => r.score >= 40) : rows;
+
+  $('resultCount').textContent =
+    `${visible.length} contact${visible.length > 1 ? 's' : ''}`;
+  $('resultHint').textContent = onlyGood && rows.length > visible.length
+    ? ` (${rows.length - visible.length} masque(s))` : '';
+  $('emptyState').classList.toggle('hidden', visible.length > 0);
+
+  $('tbody').innerHTML = visible.map(r => {
+    const name = [r.first_name, r.last_name].filter(Boolean).join(' ');
+    const flag = r.inferred ? '<span class="flag">deduite</span>' : '';
+    const mx = r.mx_ok === 0 ? '<span class="flag" style="color:var(--bad);border-color:var(--bad)">sans MX</span>' : '';
+    const why = (r.reasons || '').split(' | ').filter(Boolean).slice(0, 2).join(' &middot; ');
+    const where = r.source_url && r.source_url.startsWith('http')
+      ? `<a href="${r.source_url}" target="_blank" rel="noopener noreferrer">source</a>`
+      : `<span class="muted">${r.source_url || ''}</span>`;
+    return `<tr>
+      <td class="score">${Math.round(r.score)}</td>
+      <td>
+        <div class="email">${r.email}${flag}${mx}</div>
+        ${name ? `<div class="why"><strong>${name}</strong>${r.role_title ? ' &mdash; ' + r.role_title.slice(0, 70) : ''}</div>` : ''}
+        ${why ? `<div class="why">${why}</div>` : ''}
+        <div class="why">${where}</div>
+      </td>
+      <td>
+        <div>${r.company_name || ''}</div>
+        <div class="why">${[r.city, r.size].filter(Boolean).join(' &middot; ')}</div>
+      </td>
+      <td>${badge(r.category)}</td>
+      <td><button class="ghost" style="padding:4px 9px;font-size:12px"
+           onclick="markContacted('${r.email}', this)">Contacte</button></td>
+    </tr>`;
+  }).join('');
+}
+
+async function markContacted(email, btn) {
+  btn.disabled = true;
+  btn.textContent = '...';
+  await fetch('/api/contacted', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, note: '' }),
+  });
+  btn.textContent = 'OK';
+}
+
+async function loadResults() {
+  rows = await (await fetch(`/api/runs/${runId}/contacts`)).json();
+  $('results').classList.remove('hidden');
+  render();
+}
+
+$('go').onclick = async () => {
+  const sectors = selectedSectors();
+  const job = $('job').value.trim();
+  if (!job) { $('hint').textContent = 'Indiquez le poste vise.'; return; }
+  if (!sectors.length) { $('hint').textContent = 'Choisissez au moins un secteur.'; return; }
+
+  $('go').disabled = true;
+  $('hint').textContent = '';
+  $('log').textContent = '';
+  $('progress').classList.remove('hidden');
+  $('results').classList.add('hidden');
+  $('barFill').style.width = '0';
+  $('progressTitle').textContent = 'Recherche en cours';
+
+  const payload = {
+    job_title: job,
+    sectors,
+    department: $('dept').value.trim() || null,
+    postal_code: $('cp').value.trim() || null,
+    min_headcount: $('minh').value ? +$('minh').value : null,
+    max_headcount: $('maxh').value ? +$('maxh').value : null,
+    limit: +$('limit').value || 25,
+    use_search_engine: $('useSearch').checked,
+    verify_smtp: $('smtp').checked,
+  };
+
+  const res = await fetch('/api/search', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: 'Erreur inconnue' }));
+    logLine('Erreur : ' + (err.detail || res.status));
+    $('go').disabled = false;
+    return;
+  }
+
+  runId = (await res.json()).run_id;
+  const stream = new EventSource(`/api/runs/${runId}/stream`);
+
+  stream.onmessage = (msg) => {
+    const e = JSON.parse(msg.data);
+    if (e.total) {
+      $('counter').textContent = `${e.processed || 0} / ${e.total} entreprises`;
+      $('barFill').style.width = `${Math.round(100 * (e.processed || 0) / e.total)}%`;
+    }
+    if (e.event === 'etape') logLine('> ' + e.step);
+    else if (e.event === 'entreprise') logLine(`  ${e.name} : ${e.step}`);
+    else if (e.event === 'erreur') logLine(`  ! ${e.name} : ${e.detail}`);
+    else if (e.event === 'erreur_fatale') logLine('ECHEC : ' + e.detail);
+    else if (e.event === 'termine') {
+      $('barFill').style.width = '100%';
+      $('progressTitle').textContent = 'Recherche terminee';
+      logLine(`> ${e.total_contacts} contact(s) retenus`);
+    } else if (e.event === 'fin_flux') {
+      stream.close();
+      $('go').disabled = false;
+      loadResults();
+    }
+  };
+
+  stream.onerror = () => {
+    stream.close();
+    $('go').disabled = false;
+  };
+};
+
+$('onlyGood').onchange = render;
+$('export').onclick = () => { if (runId) location.href = `/api/runs/${runId}/export`; };
+
+loadSectors();
+</script>
+</body>
+</html>
