@@ -67,7 +67,13 @@ def configured() -> bool:
 
 def is_connected() -> bool:
     token = _load()
-    return bool(token and token.get("refresh_token"))
+    return bool(token and token.get("refresh_token") and not token.get("expired"))
+
+
+def needs_reconnect() -> bool:
+    """L'autorisation a existé mais Google ne la renouvelle plus (7 jours en mode test)."""
+    token = _load()
+    return bool(token and token.get("expired"))
 
 
 def connected_email() -> str | None:
@@ -137,7 +143,13 @@ async def _access_token(client: httpx.AsyncClient) -> str:
         "refresh_token": token["refresh_token"], "grant_type": "refresh_token",
     })
     if resp.status_code != 200:
-        raise GmailError(f"rafraîchissement du jeton refusé : {resp.text[:200]}")
+        # Typiquement `invalid_grant` : une application Google en mode « test »
+        # voit ses autorisations expirer au bout de 7 jours. On le mémorise pour
+        # que l'interface demande une reconnexion, et on ne bloque rien d'autre.
+        token["expired"] = True
+        _save(token)
+        raise GmailNotConnected("Google ne renouvelle plus l'autorisation : reconnecte ton Gmail "
+                                f"({resp.text[:120]})")
     fresh = resp.json()
     token["access_token"] = fresh["access_token"]
     token["expires_at"] = time.time() + int(fresh.get("expires_in", 3600)) - 60

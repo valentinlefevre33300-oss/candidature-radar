@@ -282,6 +282,13 @@ async def send_one(application: dict) -> None:
             attachments=_attachment(campaign, settings),
         )
         message_id, thread_id = await gmail.send(message)
+    except gmail.GmailNotConnected as exc:
+        # L'autorisation Google a expiré : la candidature reste programmée, la
+        # campagne attend une reconnexion. Rien n'est perdu.
+        db.update_campaign(campaign["id"], status="en_pause")
+        db.add_event("erreur", f"Gmail à reconnecter — campagne mise en pause ({str(exc)[:80]})",
+                     campaign_id=campaign["id"])
+        return
     except Exception as exc:
         log.warning("envoi impossible vers %s : %s", application["email"], exc)
         db.update_application(application["id"], status="echec", error=str(exc)[:300])

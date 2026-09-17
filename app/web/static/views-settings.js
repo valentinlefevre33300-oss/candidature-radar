@@ -24,8 +24,9 @@ export async function renderSettings() {
           <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><span class="mono biz sm">✓</span><div><b>${esc(g.email || 'Compte connecté')}</b><div class="muted" style="font-size:12.5px">envoi + lecture des en-têtes</div></div>
           <span style="flex:1"></span><button class="btn btn-white btn-sm" id="gmDisc">Déconnecter</button></div>`
         : g.configured ? `
-          <a class="btn btn-primary btn-block" href="/api/gmail/connect">Continuer avec Google</a>
-          <div class="hint" style="margin-top:10px;text-align:center">Gratuit · 10 secondes · révocable depuis ton compte Google</div>`
+          ${g.needs_reconnect ? `<div class="banner" style="margin-bottom:14px"><span><b>Autorisation expirée</b> — Google la limite à 7 jours pour une application en mode test${g.email ? ` (${esc(g.email)})` : ''}. Les campagnes actives sont en pause ; reconnecte-toi puis reprends-les.</span></div>` : ''}
+          <a class="btn btn-primary btn-block" href="/api/gmail/connect">${g.needs_reconnect ? 'Reconnecter mon Gmail' : 'Continuer avec Google'}</a>
+          <div class="hint" style="margin-top:10px;text-align:center">Gratuit · 10 secondes · révocable depuis ton compte Google · à refaire tous les 7 jours (mode test)</div>`
         : `
           <div class="banner" style="margin-bottom:14px"><span><b>Client OAuth manquant.</b> Il faut d’abord créer un identifiant Google — une fois pour toutes.</span></div>
           <ol style="margin:0;padding-left:18px;font-size:13.5px;line-height:1.7;color:var(--muted)">

@@ -285,7 +285,7 @@ async def settings_get() -> dict:
         "settings": {k: values.get(k, "") for k in (*SETTING_KEYS, "cv_path")},
         "cv_name": Path(values["cv_path"]).name if values.get("cv_path") else None,
         "gmail": {"configured": gmail.configured(), "connected": gmail.is_connected(),
-                  "email": gmail.connected_email(),
+                  "needs_reconnect": gmail.needs_reconnect(), "email": gmail.connected_email(),
                   "redirect_uri": BASE_URL + gmail.REDIRECT_PATH},
         "claude": compose.claude_available(),
         "pixel": bool(PUBLIC_URL),
