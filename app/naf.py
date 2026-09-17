@@ -108,3 +108,13 @@ def codes_for(sector_keys: list[str]) -> list[str]:
 def catalogue() -> list[dict[str, object]]:
     """Forme sérialisable pour l'interface web."""
     return [{"key": k, "label": v["label"], "codes": v["codes"]} for k, v in SECTORS.items()]
+
+
+def label_for_code(code: str | None) -> str | None:
+    """Libellé lisible du premier secteur qui contient ce code NAF."""
+    if not code:
+        return None
+    for value in SECTORS.values():
+        if code in value["codes"]:
+            return str(value["label"]).split(" / ")[0]
+    return None

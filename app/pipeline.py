@@ -22,7 +22,7 @@ from bs4 import BeautifulSoup
 
 from .config import GLOBAL_CONCURRENCY, MAX_PAGES_PER_SITE, SMTP_PROBE
 from .crawl.fetcher import PoliteFetcher, build_client
-from .crawl.spider import crawl_site
+from .crawl.spider import crawl_site, page_tagline
 from .extract.emails import extract_emails
 from .extract.people import (
     PATTERNS,
@@ -182,8 +182,12 @@ async def process_company(fetcher: PoliteFetcher, client: httpx.AsyncClient,
     pages = await crawl_site(fetcher, company.domain, max_pages=MAX_PAGES_PER_SITE)
 
     observed: list[Contact] = []
-    for url, html in pages:
+    for index, (url, html) in enumerate(pages):
         soup = BeautifulSoup(html, "lxml")
+        if index == 0:
+            # La page d'accueil dit en une ligne ce que fait l'entreprise :
+            # c'est la matiere premiere de la redaction personnalisee.
+            company.tagline = page_tagline(soup)
         emails = extract_emails(soup, html)
         if not emails:
             continue

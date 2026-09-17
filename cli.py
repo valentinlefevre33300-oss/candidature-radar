@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import sys
 
 from app import db
@@ -46,7 +47,13 @@ async def command_search(args: argparse.Namespace) -> int:
     )
 
     db.init_db()
-    run_id = db.start_run(args.poste, ",".join(args.secteur), args.dept, str(vars(args)))
+    # Même forme que l'interface web : l'assistant de campagne relit ces paramètres.
+    params = json.dumps({
+        "job_title": query.job_title, "sectors": list(args.secteur), "department": query.department,
+        "postal_code": query.postal_code, "min_headcount": min_h, "max_headcount": max_h,
+        "limit": query.limit, "keywords": query.keywords,
+    }, ensure_ascii=False)
+    run_id = db.start_run(args.poste, ",".join(args.secteur), args.dept, params)
 
     async def progress(event: dict) -> None:
         if event.get("event") == "etape":

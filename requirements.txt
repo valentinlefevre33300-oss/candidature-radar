@@ -6,3 +6,6 @@ uvicorn[standard]==0.34.0
 python-dotenv==1.0.1
 dnspython==2.7.0
 tenacity==9.0.0
+anthropic>=1.0
+pypdf
+python-multipart

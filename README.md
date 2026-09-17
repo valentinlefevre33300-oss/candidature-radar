@@ -4,7 +4,9 @@ Trouver **à qui écrire** pour une candidature spontanée, sans passer par un f
 
 On part d'un métier et d'un territoire ; l'outil remonte les entreprises du secteur,
 retrouve leur site, en extrait les adresses de contact publiques, identifie les
-personnes (RH, direction) et classe le tout par pertinence.
+personnes (RH, direction) et classe le tout par pertinence. Puis, en **campagne**, il
+envoie depuis ton Gmail un mail rédigé pour chaque entreprise — une personne par
+entreprise, au rythme des quotas — et suit ouvertures et réponses.
 
 ```
  secteur + zone          site web            pages contact /           adresses + rôles
@@ -31,6 +33,16 @@ mais rarement celle du dirigeant. L'outil fait la jonction :
    maison (`prenom.nom@`, `pnom@`…) et à reconstituer celle des dirigeants connus.
 6. **Classer** — un contact RH identifié passe devant un dirigeant, qui passe devant
    une boîte générique. Chaque note est justifiée en clair.
+7. **Cibler une campagne** — l'assistant compte les entreprises par secteur pour la zone
+   (« Conseil 796, Tech 630… »), lance la recherche, puis retient **une personne par
+   entreprise**, la mieux placée, en écartant celles déjà contactées et les prestataires.
+8. **Rédiger** — un squelette à variables (`{salutation}`, `{entreprise}`, `{poste}`…)
+   dont le paragraphe `{accroche}` est écrit par Claude pour chaque entreprise, à partir
+   de son activité, sa ville, sa taille et la page d'accueil de son site. Sans clé API,
+   des phrases par règles prennent le relais : le mail part quand même.
+9. **Envoyer et suivre** — depuis ton Gmail (OAuth), CV joint, un mail toutes les
+   quelques minutes aux heures de bureau, plafonds par jour et par mois. Un pixel compte
+   les ouvertures (une fois déployé), la lecture des en-têtes Gmail détecte les réponses.
 
 ## Installation
 
@@ -48,16 +60,23 @@ cp .env.example .env    # optionnel
 .venv/Scripts/python.exe -m uvicorn app.web.server:app --port 8010
 ```
 
-Puis <http://localhost:8010>. Trois vues :
+Puis <http://localhost:8010>. Quatre espaces :
 
+- **Campagnes** — le tableau de bord : envois du mois sur le plafond, envoyés, ouverts,
+  liste des campagnes (active / en pause / terminée) et journal d'activité. « Créer une
+  campagne » ouvre l'assistant en six étapes : poste et zone → secteurs avec compteurs →
+  personnes retenues (décochables) → CV → mail (variables surlignées, aperçu rédigé
+  pour la première entreprise) → récap et lancement. Chaque campagne a sa page :
+  complétion, journal, « à relancer en priorité » (les personnes qui ouvrent sans
+  répondre), table des candidatures paginée avec statut, « voir le mail », LinkedIn.
 - **Recherche** — le poste visé, une zone (`33` ou `33000`), une taille d'entreprise
-  (défaut 10–249, là où ça rend), des secteurs en pilules. La progression s'affiche
-  entreprise par entreprise ; l'historique des recherches est en dessous.
-- **Résultats** — lignes triées par score, filtres par catégorie, monogramme par
-  entreprise. Un clic sur une ligne explique le score. **Suivre** ajoute la personne
-  au suivi, **Écarter** la range hors de vue. Export CSV.
-- **Suivi** — chaque personne avec son statut (à contacter → contacté → relancé →
-  a répondu), une note, et la recherche d'où elle vient. Export CSV.
+  (défaut 10–249, là où ça rend), des secteurs en pilules. Résultats triés par score,
+  un clic explique la note. Point de départ possible d'une campagne.
+- **Suivi** — le suivi manuel : personnes marquées à la main (à contacter → contacté →
+  relancé → a répondu), note, export CSV.
+- **Réglages** — connexion Gmail, nom et signature, résumé de profil pour la rédaction,
+  CV, plafonds, et l'interrupteur **mode simulation** : toute la chaîne tourne, aucun
+  mail ne part. Commence par là.
 
 L'interface reprend le système de design de [Le Brief](https://veille-tech-543e9e.fly.dev/) :
 blanc, cartes grises sans bordure, titres en Fraunces, corps en Poppins, un seul accent indigo.
@@ -94,10 +113,17 @@ sont conservées mais fortement dépriorisées, et la raison est affichée.
 
 - **Pas de LinkedIn.** Anti-bot agressif et conditions d'utilisation contraires ; le
   compte du scrapeur y passe avant les données. L'annuaire légal donne les dirigeants
-  sans ce risque.
-- **Pas d'envoi de mail.** L'outil trouve des adresses, il n'écrit à personne.
+  sans ce risque. Les boutons « in » ouvrent une recherche LinkedIn, pas un profil.
+- **Pas d'envoi en rafale.** Une personne par entreprise, jamais deux fois la même,
+  un mail toutes les ~4 minutes entre 8 h et 19 h, 25 par jour et 200 par mois par
+  défaut. Ce sont des candidatures, pas une newsletter — et Gmail coupe les comptes
+  qui se comportent autrement.
 - **Pas de contournement.** `robots.txt` est respecté, le débit est limité à une requête
   par domaine et par 1,5 s, et l'agent s'annonce avec une adresse de contact.
+- **Pas de comptage d'ouvertures fiable.** Le pixel ne fonctionne que si l'application
+  est joignable depuis Internet (`CR_PUBLIC_URL`), et Gmail comme Apple Mail préchargent
+  les images : on compte des ouvertures probables, pas certaines. CandiBoost et les
+  autres ont exactement la même limite.
 
 Il faut s'attendre à ce que **les grandes entreprises ne donnent rien** : leurs adresses
 sont derrière un formulaire. Le rendement est nettement meilleur sur les structures de
@@ -126,6 +152,21 @@ Tout est réglable par variables d'environnement — voir [.env.example](.env.ex
 Les plus utiles : `CR_CONTACT_EMAIL` (permet à un webmaster de vous joindre plutôt que
 de vous bloquer), `CR_DOMAIN_DELAY`, `CR_CONCURRENCY`, `CR_MAX_PAGES`.
 
+Pour les campagnes :
+
+| Variable | Rôle |
+|---|---|
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Client OAuth pour « Continuer avec Google ». À créer dans Google Cloud → Identifiants (ID client OAuth, application Web) avec l'URI de redirection `http://localhost:8010/api/gmail/callback` ; activer l'API Gmail ; s'ajouter en utilisateur test de l'écran de consentement. La page Réglages détaille la procédure. |
+| `ANTHROPIC_API_KEY` | Rédaction du paragraphe par entreprise. Absente : repli par règles. |
+| `CR_CLAUDE_MODEL` | Modèle utilisé (défaut `claude-opus-5`). |
+| `CR_PUBLIC_URL` | URL publique de l'application, pour le pixel d'ouverture. Vide en local. |
+| `CR_MONTHLY_CAP` / `CR_DAILY_CAP` / `CR_SEND_INTERVAL` | Plafonds et espacement des envois. |
+| `CR_DRY_RUN` | `1` force la simulation quoi qu'il arrive (l'interrupteur des réglages fait la même chose sans redémarrer). |
+
+Le jeton Gmail est stocké dans `data/gmail_token.json` (ignoré par git). Portées
+demandées : `gmail.send` et `gmail.metadata` — envoyer, et lire les **en-têtes** des fils
+pour détecter les réponses. Jamais le contenu des mails.
+
 ## Tests
 
 ```bash
@@ -146,7 +187,12 @@ app/
 ├── extract/people.py   noms, fonctions, motif d'adressage
 ├── score.py            classement et justifications
 ├── verify.py           contrôle MX (et sonde SMTP optionnelle)
-├── pipeline.py         orchestration
-├── db.py               SQLite : historique, déduplication, export
-└── web/                interface locale
+├── pipeline.py         orchestration d'une recherche
+├── compose.py          gabarit à variables + paragraphe par entreprise (Claude / règles)
+├── gmail.py            OAuth, envoi, détection des réponses (API REST, sans SDK)
+├── campaigns.py        destinataires, programmation, boucle d'envoi, quotas, analyse de marché
+├── db.py               SQLite : recherches, contacts, suivi, campagnes, candidatures, journal
+└── web/
+    ├── server.py       API FastAPI, pixel d'ouverture, fichiers statiques
+    └── static/         interface : core.js, views-*.js, app.css (système « Le Brief »)
 ```

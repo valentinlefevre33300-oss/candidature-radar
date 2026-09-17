@@ -36,3 +36,24 @@ SMTP_FROM = os.getenv("CR_SMTP_FROM", "verify@example.org")
 # Sources
 SIRENE_API = "https://recherche-entreprises.api.gouv.fr/search"
 
+
+# --- Campagnes : envoi, suivi, rédaction ---------------------------------
+BASE_URL = os.getenv("CR_BASE_URL", "http://localhost:8010").rstrip("/")
+# URL joignable depuis Internet, pour le pixel d'ouverture. Vide = pas de pixel
+# (l'app tourne en local) ; à renseigner au déploiement.
+PUBLIC_URL = os.getenv("CR_PUBLIC_URL", "").rstrip("/")
+
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
+GMAIL_TOKEN_PATH = Path(os.getenv("CR_GMAIL_TOKEN", ROOT / "data" / "gmail_token.json"))
+
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+
+MONTHLY_CAP = int(os.getenv("CR_MONTHLY_CAP", "200"))   # envois par mois, toutes campagnes
+DAILY_CAP = int(os.getenv("CR_DAILY_CAP", "25"))        # envois par jour, toutes campagnes
+SEND_INTERVAL = int(os.getenv("CR_SEND_INTERVAL", "240"))  # secondes minimum entre deux envois
+SENDER_NAME = os.getenv("CR_SENDER_NAME", "")
+CLAUDE_MODEL = os.getenv("CR_CLAUDE_MODEL", "claude-opus-5")
+# Mode simulation : la chaîne d'envoi tourne entièrement (rédaction, quotas,
+# journal) mais aucun mail ne part. Pour tester une campagne à blanc.
+DRY_RUN = os.getenv("CR_DRY_RUN", "0") == "1"

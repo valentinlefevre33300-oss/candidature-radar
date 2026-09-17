@@ -173,3 +173,34 @@ async def search_companies(client: httpx.AsyncClient, query: SearchQuery) -> lis
         await asyncio.sleep(0.2)  # l'API est gratuite, on ne la martèle pas
 
     return companies
+
+
+def _params_for(query: SearchQuery) -> dict[str, str]:
+    """Paramètres HTTP communs à la recherche et au comptage."""
+    params: dict[str, str] = {"per_page": "1"}
+    if query.naf_codes:
+        params["activite_principale"] = ",".join(query.naf_codes)
+    if query.keywords.strip():
+        params["q"] = query.keywords.strip()
+    if query.department:
+        params["departement"] = query.department
+    if query.postal_code:
+        params["code_postal"] = query.postal_code
+    if query.active_only:
+        params["etat_administratif"] = "A"
+    codes = headcount_codes(query.min_headcount, query.max_headcount)
+    if codes:
+        params["tranche_effectif_salarie"] = ",".join(codes)
+    return params
+
+
+async def count_companies(client: httpx.AsyncClient, query: SearchQuery) -> int:
+    """Nombre total d'entreprises correspondant aux critères, en une requête."""
+    try:
+        resp = await client.get(SIRENE_API, params=_params_for(query), timeout=REQUEST_TIMEOUT,
+                                headers={"User-Agent": USER_AGENT})
+        resp.raise_for_status()
+        return int(resp.json().get("total_results") or 0)
+    except (httpx.HTTPError, ValueError) as exc:
+        log.debug("comptage impossible : %s", exc)
+        return 0

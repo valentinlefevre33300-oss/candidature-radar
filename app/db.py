@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS companies (
     size        TEXT,
     domain      TEXT,
     domain_method TEXT,
+    tagline     TEXT,
     seen_at     TEXT NOT NULL
 );
 
@@ -87,6 +88,80 @@ CREATE TABLE IF NOT EXISTS contacts (
 -- suivi reste lisible même si les recherches d'origine sont purgées.
 CREATE TABLE IF NOT EXISTS outreach ({_OUTREACH_DDL});
 
+-- Réglages libres (expéditeur, signature, CV par défaut…), un couple clé/valeur.
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+);
+
+-- Une campagne = un poste, une cible, un gabarit de mail, un CV, une liste
+-- de candidatures programmées puis envoyées au rythme des quotas.
+CREATE TABLE IF NOT EXISTS campaigns (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    name         TEXT NOT NULL,
+    job_title    TEXT NOT NULL,
+    zone         TEXT,
+    sectors      TEXT,
+    run_id       INTEGER,
+    status       TEXT NOT NULL DEFAULT 'brouillon',   -- brouillon | active | en_pause | terminee
+    subject_tpl  TEXT,
+    body_tpl     TEXT,
+    personalize  INTEGER DEFAULT 1,
+    cv_path      TEXT,
+    daily_cap    INTEGER,
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL,
+    launched_at  TEXT
+);
+
+-- Une candidature = un mail vers une personne, pour une campagne. Le contact
+-- et l'entreprise sont figés au moment de la création.
+CREATE TABLE IF NOT EXISTS applications (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    campaign_id      INTEGER NOT NULL,
+    email            TEXT NOT NULL,
+    first_name       TEXT,
+    last_name        TEXT,
+    role_title       TEXT,
+    category         TEXT,
+    score            REAL,
+    company_siren    TEXT,
+    company_name     TEXT,
+    company_domain   TEXT,
+    company_city     TEXT,
+    company_size     TEXT,
+    company_naf      TEXT,
+    company_tagline  TEXT,
+    subject          TEXT,
+    body_text        TEXT,
+    body_html        TEXT,
+    hook             TEXT,                            -- paragraphe personnalisé
+    status           TEXT NOT NULL DEFAULT 'programme', -- programme | envoye | ouvert | repondu | echec | annule
+    scheduled_at     TEXT,
+    sent_at          TEXT,
+    gmail_message_id TEXT,
+    gmail_thread_id  TEXT,
+    token            TEXT UNIQUE,                     -- pixel d'ouverture
+    opens            INTEGER DEFAULT 0,
+    last_open_at     TEXT,
+    replied_at       TEXT,
+    error            TEXT,
+    UNIQUE (campaign_id, email)
+);
+
+-- Journal d'activité : ce qui s'est passé, dans l'ordre.
+CREATE TABLE IF NOT EXISTS events (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    campaign_id    INTEGER,
+    application_id INTEGER,
+    kind           TEXT NOT NULL,   -- lancement | envoi | ouverture | reponse | erreur | pause | reprise
+    at             TEXT NOT NULL,
+    detail         TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_app_campaign ON applications(campaign_id, status);
+CREATE INDEX IF NOT EXISTS idx_app_due ON applications(status, scheduled_at);
+CREATE INDEX IF NOT EXISTS idx_events_campaign ON events(campaign_id, id DESC);
 CREATE INDEX IF NOT EXISTS idx_contacts_run ON contacts(run_id);
 CREATE INDEX IF NOT EXISTS idx_contacts_score ON contacts(score DESC);
 CREATE INDEX IF NOT EXISTS idx_companies_domain ON companies(domain);
@@ -152,10 +227,17 @@ def _upgrade_outreach(conn: sqlite3.Connection) -> None:
         """)
 
 
+def _upgrade_companies(conn: sqlite3.Connection) -> None:
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(companies)")}
+    if "tagline" not in existing:
+        conn.execute("ALTER TABLE companies ADD COLUMN tagline TEXT")
+
+
 def init_db(path: Path | None = None) -> None:
     with connect(path) as conn:
         conn.executescript(SCHEMA)
         _upgrade_outreach(conn)
+        _upgrade_companies(conn)
 
 
 def start_run(job_title: str, sectors: str, department: str | None, params: str) -> int:
@@ -180,11 +262,13 @@ def save_company(company: Company) -> None:
     with connect() as conn:
         conn.execute(
             "INSERT INTO companies (siren, name, naf, city, postal_code, department, size, "
-            "domain, domain_method, seen_at) VALUES (?,?,?,?,?,?,?,?,?,?) "
+            "domain, domain_method, tagline, seen_at) VALUES (?,?,?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(siren) DO UPDATE SET domain=excluded.domain, "
-            "domain_method=excluded.domain_method, seen_at=excluded.seen_at",
+            "domain_method=excluded.domain_method, "
+            "tagline=COALESCE(excluded.tagline, companies.tagline), seen_at=excluded.seen_at",
             (company.siren, company.name, company.naf, company.city, company.postal_code,
-             company.department, company.size, company.domain, company.domain_method, _now()),
+             company.department, company.size, company.domain, company.domain_method,
+             company.tagline, _now()),
         )
 
 
@@ -307,7 +391,7 @@ def get_run(run_id: int) -> dict | None:
 def run_contacts(run_id: int) -> list[dict]:
     with connect() as conn:
         return [dict(r) for r in conn.execute(
-            "SELECT c.*, co.city, co.size, co.domain, "
+            "SELECT c.*, co.city, co.size, co.domain, co.naf, co.tagline, "
             "o.status AS outreach_status, o.note AS outreach_note "
             "FROM contacts c "
             "LEFT JOIN companies co ON co.siren = c.company_siren "
@@ -335,6 +419,240 @@ def export_csv(run_id: int) -> Path:
         for row in rows:
             writer.writerow(row)
     return path
+
+
+# -------------------------------------------------------------- réglages ---
+
+def get_setting(key: str, default: str = "") -> str:
+    with connect() as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        return row["value"] if row and row["value"] is not None else default
+
+
+def set_setting(key: str, value: str) -> None:
+    with connect() as conn:
+        conn.execute("INSERT INTO settings (key, value) VALUES (?,?) "
+                     "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
+
+
+def all_settings() -> dict[str, str]:
+    with connect() as conn:
+        return {r["key"]: r["value"] for r in conn.execute("SELECT key, value FROM settings")}
+
+
+# ------------------------------------------------------------- campagnes ---
+
+CAMPAIGN_STATUSES = ("brouillon", "active", "en_pause", "terminee")
+APPLICATION_STATUSES = ("programme", "envoye", "ouvert", "repondu", "echec", "annule")
+SENT_STATUSES = ("envoye", "ouvert", "repondu")
+
+_CAMPAIGN_COUNTS = """
+    (SELECT COUNT(*) FROM applications a WHERE a.campaign_id=c.id) AS total,
+    (SELECT COUNT(*) FROM applications a WHERE a.campaign_id=c.id AND a.status='programme') AS scheduled,
+    (SELECT COUNT(*) FROM applications a WHERE a.campaign_id=c.id
+        AND a.status IN ('envoye','ouvert','repondu')) AS sent,
+    (SELECT COUNT(*) FROM applications a WHERE a.campaign_id=c.id AND a.opens > 0) AS opened,
+    (SELECT COUNT(*) FROM applications a WHERE a.campaign_id=c.id AND a.status='repondu') AS replied,
+    (SELECT COUNT(*) FROM applications a WHERE a.campaign_id=c.id AND a.status='echec') AS failed
+"""
+
+
+def create_campaign(**fields) -> int:
+    now = _now()
+    cols = ["name", "job_title", "zone", "sectors", "run_id", "status", "subject_tpl",
+            "body_tpl", "personalize", "cv_path", "daily_cap"]
+    values = [fields.get(c) for c in cols]
+    with connect() as conn:
+        cur = conn.execute(
+            f"INSERT INTO campaigns ({', '.join(cols)}, created_at, updated_at) "
+            f"VALUES ({', '.join('?' * len(cols))}, ?, ?)", (*values, now, now))
+        return int(cur.lastrowid)
+
+
+def update_campaign(campaign_id: int, **fields) -> bool:
+    allowed = {"name", "job_title", "zone", "sectors", "run_id", "status", "subject_tpl",
+               "body_tpl", "personalize", "cv_path", "daily_cap", "launched_at"}
+    changes = {k: v for k, v in fields.items() if k in allowed}
+    if not changes:
+        return False
+    changes["updated_at"] = _now()
+    assignments = ", ".join(f"{k}=?" for k in changes)
+    with connect() as conn:
+        cur = conn.execute(f"UPDATE campaigns SET {assignments} WHERE id=?",
+                           (*changes.values(), campaign_id))
+        return cur.rowcount > 0
+
+
+def get_campaign(campaign_id: int) -> dict | None:
+    with connect() as conn:
+        row = conn.execute(
+            f"SELECT c.*, {_CAMPAIGN_COUNTS} FROM campaigns c WHERE c.id=?", (campaign_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def list_campaigns() -> list[dict]:
+    with connect() as conn:
+        return [dict(r) for r in conn.execute(
+            f"SELECT c.*, {_CAMPAIGN_COUNTS} FROM campaigns c ORDER BY c.id DESC")]
+
+
+def delete_campaign(campaign_id: int) -> None:
+    with connect() as conn:
+        conn.execute("DELETE FROM events WHERE campaign_id=?", (campaign_id,))
+        conn.execute("DELETE FROM applications WHERE campaign_id=?", (campaign_id,))
+        conn.execute("DELETE FROM campaigns WHERE id=?", (campaign_id,))
+
+
+# ---------------------------------------------------------- candidatures ---
+
+APPLICATION_FIELDS = (
+    "email", "first_name", "last_name", "role_title", "category", "score",
+    "company_siren", "company_name", "company_domain", "company_city", "company_size",
+    "company_naf", "company_tagline", "subject", "body_text", "body_html", "hook",
+    "status", "scheduled_at", "token",
+)
+
+
+def add_applications(campaign_id: int, rows: list[dict]) -> int:
+    """Ajoute des candidatures ; celles déjà présentes (même adresse) sont ignorées."""
+    if not rows:
+        return 0
+    cols = ("campaign_id", *APPLICATION_FIELDS)
+    with connect() as conn:
+        cur = conn.executemany(
+            f"INSERT OR IGNORE INTO applications ({', '.join(cols)}) "
+            f"VALUES ({', '.join('?' * len(cols))})",
+            [(campaign_id, *[row.get(f) for f in APPLICATION_FIELDS]) for row in rows])
+        return cur.rowcount
+
+
+def update_application(application_id: int, **fields) -> None:
+    allowed = set(APPLICATION_FIELDS) | {"sent_at", "gmail_message_id", "gmail_thread_id",
+                                         "opens", "last_open_at", "replied_at", "error"}
+    changes = {k: v for k, v in fields.items() if k in allowed}
+    if not changes:
+        return
+    assignments = ", ".join(f"{k}=?" for k in changes)
+    with connect() as conn:
+        conn.execute(f"UPDATE applications SET {assignments} WHERE id=?",
+                     (*changes.values(), application_id))
+
+
+def get_application(application_id: int) -> dict | None:
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM applications WHERE id=?", (application_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def list_applications(campaign_id: int, status: str | None = None, q: str = "",
+                      page: int = 1, size: int = 10) -> tuple[list[dict], int]:
+    """Candidatures d'une campagne, paginées. Renvoie (lignes, total filtré)."""
+    where, params = ["campaign_id=?"], [campaign_id]
+    if status:
+        where.append("status=?")
+        params.append(status)
+    if q:
+        where.append("(company_name LIKE ? OR email LIKE ? OR first_name LIKE ? OR last_name LIKE ?)")
+        params += [f"%{q}%"] * 4
+    clause = " AND ".join(where)
+    with connect() as conn:
+        total = conn.execute(f"SELECT COUNT(*) FROM applications WHERE {clause}", params).fetchone()[0]
+        rows = conn.execute(
+            f"SELECT * FROM applications WHERE {clause} "
+            "ORDER BY CASE status WHEN 'repondu' THEN 0 WHEN 'ouvert' THEN 1 WHEN 'envoye' THEN 2 "
+            "WHEN 'programme' THEN 3 ELSE 4 END, COALESCE(sent_at, scheduled_at) DESC "
+            "LIMIT ? OFFSET ?", (*params, size, (page - 1) * size))
+        return [dict(r) for r in rows], int(total)
+
+
+def application_status_counts(campaign_id: int) -> dict[str, int]:
+    with connect() as conn:
+        rows = conn.execute("SELECT status, COUNT(*) AS n FROM applications WHERE campaign_id=? "
+                            "GROUP BY status", (campaign_id,))
+        counts = {s: 0 for s in APPLICATION_STATUSES}
+        for r in rows:
+            counts[r["status"]] = r["n"]
+        return counts
+
+
+def due_applications(limit: int = 5) -> list[dict]:
+    """Candidatures programmées dont l'heure est passée, campagne active seulement."""
+    with connect() as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT a.* FROM applications a JOIN campaigns c ON c.id = a.campaign_id "
+            "WHERE a.status='programme' AND c.status='active' AND a.scheduled_at <= ? "
+            "ORDER BY a.scheduled_at LIMIT ?", (_now(), limit))]
+
+
+def sent_since(prefix: str, campaign_id: int | None = None) -> int:
+    """Nombre d'envois dont `sent_at` commence par `prefix` (« 2026-09 » ou « 2026-09-17 »)."""
+    where, params = ["sent_at LIKE ?"], [prefix + "%"]
+    if campaign_id is not None:
+        where.append("campaign_id=?")
+        params.append(campaign_id)
+    with connect() as conn:
+        return int(conn.execute(
+            f"SELECT COUNT(*) FROM applications WHERE {' AND '.join(where)}", params).fetchone()[0])
+
+
+def last_sent_at() -> str | None:
+    with connect() as conn:
+        row = conn.execute("SELECT MAX(sent_at) AS m FROM applications").fetchone()
+        return row["m"] if row else None
+
+
+def record_open(token: str) -> dict | None:
+    """Enregistre une ouverture. Renvoie la candidature touchée, ou None si jeton inconnu."""
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM applications WHERE token=?", (token,)).fetchone()
+        if row is None:
+            return None
+        conn.execute(
+            "UPDATE applications SET opens = opens + 1, last_open_at = ?, "
+            "status = CASE WHEN status = 'envoye' THEN 'ouvert' ELSE status END WHERE id = ?",
+            (_now(), row["id"]))
+        return dict(row)
+
+
+def pending_reply_checks(limit: int = 40) -> list[dict]:
+    """Candidatures envoyées dont on n'a pas encore vu de réponse."""
+    with connect() as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT * FROM applications WHERE gmail_thread_id IS NOT NULL "
+            "AND status IN ('envoye', 'ouvert') ORDER BY sent_at DESC LIMIT ?", (limit,))]
+
+
+# ---------------------------------------------------------------- journal ---
+
+def add_event(kind: str, detail: str = "", campaign_id: int | None = None,
+              application_id: int | None = None) -> None:
+    with connect() as conn:
+        conn.execute("INSERT INTO events (campaign_id, application_id, kind, at, detail) "
+                     "VALUES (?,?,?,?,?)", (campaign_id, application_id, kind, _now(), detail))
+
+
+def list_events(campaign_id: int | None = None, limit: int = 50) -> list[dict]:
+    with connect() as conn:
+        if campaign_id is None:
+            rows = conn.execute(
+                "SELECT e.*, a.company_name, a.email FROM events e "
+                "LEFT JOIN applications a ON a.id = e.application_id "
+                "ORDER BY e.id DESC LIMIT ?", (limit,))
+        else:
+            rows = conn.execute(
+                "SELECT e.*, a.company_name, a.email FROM events e "
+                "LEFT JOIN applications a ON a.id = e.application_id "
+                "WHERE e.campaign_id=? ORDER BY e.id DESC LIMIT ?", (campaign_id, limit))
+        return [dict(r) for r in rows]
+
+
+def priority_followups(campaign_id: int, limit: int = 8) -> list[dict]:
+    """Les personnes qui ouvrent le plus sans répondre : à relancer en priorité."""
+    with connect() as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT * FROM applications WHERE campaign_id=? AND opens > 0 AND status != 'repondu' "
+            "ORDER BY opens DESC, last_open_at DESC LIMIT ?", (campaign_id, limit))]
 
 
 OUTREACH_COLUMNS = ["status", "email", "first_name", "last_name", "role_title",

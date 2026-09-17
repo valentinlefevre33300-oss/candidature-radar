@@ -133,3 +133,23 @@ async def crawl_site(fetcher: PoliteFetcher, domain: str, *,
             pages.append(result)
 
     return pages
+
+
+def page_tagline(soup: BeautifulSoup, limit: int = 240) -> str | None:
+    """Ce que le site dit de lui-même en une ligne : titre + meta description.
+
+    Sert à la rédaction personnalisée : c'est le seul texte « officiel » sur
+    l'activité qu'on ait sans lire tout le site.
+    """
+    parts: list[str] = []
+    if soup.title and soup.title.string:
+        parts.append(soup.title.string.strip())
+    for name in ("description", "og:description"):
+        tag = soup.find("meta", attrs={"name": name}) or soup.find("meta", attrs={"property": name})
+        content = (tag.get("content") or "").strip() if tag else ""
+        if content and content not in parts:
+            parts.append(content)
+            break
+    text = " — ".join(p for p in parts if p)
+    text = " ".join(text.split())
+    return text[:limit] or None
