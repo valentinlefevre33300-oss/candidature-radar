@@ -9,8 +9,11 @@ from dotenv import load_dotenv
 load_dotenv()
 
 ROOT = Path(__file__).resolve().parent.parent
-DB_PATH = Path(os.getenv("CR_DB_PATH", ROOT / "data" / "candidature-radar.sqlite3"))
-EXPORT_DIR = Path(os.getenv("CR_EXPORT_DIR", ROOT / "data" / "exports"))
+# Dossier des données (base, jeton Gmail, CV, exports, clé de session) : en
+# production c'est le volume persistant de l'hébergeur.
+DATA_DIR = Path(os.getenv("CR_DATA_DIR", ROOT / "data"))
+DB_PATH = Path(os.getenv("CR_DB_PATH", DATA_DIR / "candidature-radar.sqlite3"))
+EXPORT_DIR = Path(os.getenv("CR_EXPORT_DIR", DATA_DIR / "exports"))
 
 # Identité déclarée aux serveurs. On s'annonce honnêtement : pas d'usurpation
 # de navigateur, et une adresse de contact pour que l'on puisse nous joindre.
@@ -45,7 +48,7 @@ PUBLIC_URL = os.getenv("CR_PUBLIC_URL", "").rstrip("/")
 
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
-GMAIL_TOKEN_PATH = Path(os.getenv("CR_GMAIL_TOKEN", ROOT / "data" / "gmail_token.json"))
+GMAIL_TOKEN_PATH = Path(os.getenv("CR_GMAIL_TOKEN", DATA_DIR / "gmail_token.json"))
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 

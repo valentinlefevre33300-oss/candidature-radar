@@ -1,0 +1,16 @@
+# Ce qui ne doit pas entrer dans l'image.
+.venv
+.git
+.github
+.env
+data
+tests
+docs
+*.md
+__pycache__
+**/__pycache__
+*.py[cod]
+*.sqlite3*
+.idea
+.vscode
+.DS_Store

@@ -23,8 +23,8 @@ import httpx
 
 from .. import campaigns as engine
 from .. import auth, compose, db, geo, gmail
-from ..config import (APP_PASSWORD, APP_USER, BASE_URL, DAILY_CAP, DRY_RUN, MONTHLY_CAP,
-                      PUBLIC_URL, REQUIRE_LOGIN, ROOT)
+from ..config import (APP_PASSWORD, APP_USER, BASE_URL, DAILY_CAP, DATA_DIR, DRY_RUN, MONTHLY_CAP,
+                      PUBLIC_URL, REQUIRE_LOGIN)
 from ..models import SearchQuery
 from ..naf import catalogue, codes_for
 from ..pipeline import run_search
@@ -39,7 +39,7 @@ app = FastAPI(title="Candidature Radar", docs_url="/api/docs")
 _LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost"}
 # Ce qui reste ouvert sans session : le pixel (les messageries le chargent), la
 # page de connexion et les retours de Google.
-_OPEN_PREFIXES = ("/t/", "/login", "/api/auth/", "/api/gmail/callback")
+_OPEN_PREFIXES = ("/t/", "/login", "/api/auth/", "/api/gmail/callback", "/health")
 
 
 def _is_local(request) -> bool:
@@ -165,6 +165,12 @@ async def _shutdown() -> None:
 async def index() -> HTMLResponse:
     return HTMLResponse((STATIC / "index.html").read_text(encoding="utf-8"))
 
+
+
+@app.get("/health")
+async def health() -> dict:
+    """Bilan de santé pour l'hébergeur : ouvert, sans rien révéler."""
+    return {"ok": True}
 
 # ------------------------------------------------------------- Connexion ---
 
@@ -421,7 +427,7 @@ async def outreach_export() -> FileResponse:
 # -------------------------------------------------------------- réglages ---
 
 SETTING_KEYS = ("sender_name", "signature", "profile_summary", "dry_run")
-CV_DIR = ROOT / "data" / "cv"
+CV_DIR = DATA_DIR / "cv"
 
 
 @app.get("/api/settings")

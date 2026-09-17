@@ -19,12 +19,11 @@ import json
 import logging
 import secrets
 import time
-from pathlib import Path
 from urllib.parse import urlencode
 
 import httpx
 
-from .config import ALLOWED_EMAILS, BASE_URL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, ROOT
+from .config import ALLOWED_EMAILS, BASE_URL, DATA_DIR, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
 from . import gmail
 
 log = logging.getLogger(__name__)
@@ -44,7 +43,7 @@ class AuthError(RuntimeError):
 
 def _secret() -> bytes:
     """Clé de signature des sessions, générée une fois et gardée hors de git."""
-    path = ROOT / "data" / "session_secret"
+    path = DATA_DIR / "session_secret"
     try:
         value = path.read_text(encoding="utf-8").strip()
         if len(value) >= 32:

@@ -192,6 +192,35 @@ demandées : `gmail.send` et `gmail.readonly` — envoyer, et lire les réponses
 **dans les fils des mails envoyés par l'outil**, pour les classer. Le reste de la boîte
 n'est jamais consulté ; le code qui lit un fil est dans `app/gmail.py`, une fonction.
 
+## Déploiement (Fly.io, domaine `leradar.valentinlefevre.io`)
+
+L'hébergement web Hostinger du portfolio ne fait tourner que des fichiers statiques :
+l'outil, lui, est un processus Python permanent (API, boucle d'envoi, lecture des
+réponses, SQLite). Il tourne donc sur **Fly.io**, comme Le Brief, et le sous-domaine
+Hostinger pointe dessus. Fichiers : `Dockerfile`, `fly.toml` (app `leradar`, région
+Paris, volume `/data`, machine toujours allumée), `.github/workflows/deploy.yml`
+(redéploie à chaque push si le secret de dépôt `FLY_API_TOKEN` existe).
+
+Première mise en ligne, depuis le dossier du projet :
+
+```bash
+fly auth login
+fly launch --no-deploy --copy-config --name leradar --region cdg
+fly volumes create leradar_data --region cdg --size 1
+fly secrets set GOOGLE_CLIENT_ID=… GOOGLE_CLIENT_SECRET=… ANTHROPIC_API_KEY=…
+fly deploy
+fly certs add leradar.valentinlefevre.io
+```
+
+Puis, dans hPanel → zone DNS de `valentinlefevre.io` : supprimer le sous-domaine
+`leradar` créé côté hébergement, et ajouter l'enregistrement que `fly certs add`
+indique (`CNAME leradar → leradar.fly.dev`, ou les A/AAAA donnés). Dans Google
+Cloud → le client OAuth : ajouter l'URI de redirection
+`https://leradar.valentinlefevre.io/api/gmail/callback`. Enfin, sur le site :
+se connecter avec Google, relier Gmail dans Réglages, importer le CV, désactiver
+la simulation. Les données locales (`data/`) ne sont pas copiées : le site part
+d'une base vide.
+
 ## Connexion à l'interface
 
 Sur le PC, l'interface s'ouvre directement. Dès qu'elle est jointe d'ailleurs — un
