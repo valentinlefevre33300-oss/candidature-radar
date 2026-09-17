@@ -32,6 +32,16 @@ STATIC = Path(__file__).parent / "static"
 app = FastAPI(title="Candidature Radar", docs_url="/api/docs")
 
 
+@app.middleware("http")
+async def _revalidate_static(request, call_next):
+    """Les modules JS sont importés sans suffixe de version : sans cet en-tête,
+    le navigateur resservait un `core.js` périmé à côté de vues à jour."""
+    response = await call_next(request)
+    if request.url.path == "/" or request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 class Job:
     """Une recherche en cours et le canal qui diffuse son avancement."""
 
