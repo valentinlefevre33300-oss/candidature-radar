@@ -123,6 +123,7 @@ Règles :
 - 2 à 3 phrases, 70 mots au plus, à la première personne, en français, tutoiement exclu.
 - Appuie-toi UNIQUEMENT sur les faits fournis (activité, ville, taille, description du site, fonction de l'interlocuteur). N'invente ni chiffre, ni produit, ni actualité, ni valeur d'entreprise. Si les faits sont minces, parle du type de structure et du poste, pas de l'entreprise en détail.
 - Ton sobre et direct : pas de superlatifs, pas de « leader », « incontournable », « passionnant », pas de flatterie.
+- La phrase précédente du mail cite déjà le nom de l'entreprise et le poste : ne les répète pas, ne commence pas par « Je m'adresse à » ni par le nom de l'entreprise. Parle de ce qu'elle fait (« votre activité de… », « vos outils de… »).
 - Fais le lien entre ce que fait l'entreprise et ce que le candidat apporte, d'après son profil.
 - Pas de salutation, pas de formule finale, pas de guillemets, pas de puces, pas de titre. Renvoie le paragraphe seul."""
 
