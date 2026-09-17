@@ -427,17 +427,18 @@ async def reply_loop() -> None:
 
 # ------------------------------------------------------------------ marché ---
 
-async def market(zone: str | None, min_headcount: int | None, max_headcount: int | None) -> list[dict]:
-    """Nombre d'entreprises par secteur pour une zone : l'« analyse du marché »."""
-    department = zone if zone and len(zone) <= 3 else None
-    postal = zone if zone and len(zone) == 5 else None
+async def market(cities: list[dict], agglomeration: bool, zone: str | None,
+                 min_headcount: int | None, max_headcount: int | None) -> list[dict]:
+    """Nombre d'entreprises par secteur pour une cible : l'« analyse du marché »."""
+    department = zone if zone and len(zone) <= 3 and not cities else None
+    postal = zone if zone and len(zone) == 5 and not cities else None
     semaphore = asyncio.Semaphore(4)
 
     async with httpx.AsyncClient(follow_redirects=True) as client:
         async def one(key: str, value: dict) -> dict:
             query = SearchQuery(job_title="", naf_codes=list(value["codes"]), department=department,
-                                postal_code=postal, min_headcount=min_headcount,
-                                max_headcount=max_headcount, limit=1)
+                                postal_code=postal, cities=cities, agglomeration=agglomeration,
+                                min_headcount=min_headcount, max_headcount=max_headcount, limit=1)
             async with semaphore:
                 total = await count_companies(client, query)
             return {"key": key, "label": value["label"], "count": total}

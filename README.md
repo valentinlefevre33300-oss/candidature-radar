@@ -72,14 +72,17 @@ Puis <http://localhost:8010>. Quatre espaces :
 
 - **Campagnes** — le tableau de bord : envois du mois sur le plafond, envoyés, ouverts,
   liste des campagnes (active / en pause / terminée) et journal d'activité. « Créer une
-  campagne » ouvre l'assistant en six étapes : poste et zone → secteurs avec compteurs →
+  campagne » ouvre l'assistant en six étapes : poste et villes (plusieurs possibles, avec
+  option « toute l'agglomération ») → secteurs avec compteurs →
   personnes retenues (décochables) → CV → mail (variables surlignées, aperçu rédigé
   pour la première entreprise) → récap et lancement. Chaque campagne a sa page :
   complétion, journal, « à relancer en priorité » (les personnes qui ouvrent sans
   répondre), table des candidatures paginée avec statut, « voir le mail », LinkedIn.
-- **Recherche** — le poste visé, une zone (`33` ou `33000`), une taille d'entreprise
-  (défaut 10–249, là où ça rend), des secteurs en pilules. Résultats triés par score,
-  un clic explique la note. Point de départ possible d'une campagne.
+- **Recherche** — le poste visé, une ou plusieurs villes (autocomplétion sur l'API
+  géographique de l'État ; « agglomération » étend chaque ville à son intercommunalité),
+  une taille d'entreprise (défaut 10–249, là où ça rend), des secteurs en pilules.
+  Résultats triés par score, un clic explique la note. Point de départ possible d'une
+  campagne. Le CLI accepte encore `--dept` et `--cp`.
 - **Suivi** — le suivi manuel : personnes marquées à la main (à contacter → contacté →
   relancé → a répondu), note, export CSV.
 - **Réglages** — connexion Gmail, nom et signature, résumé de profil pour la rédaction,

@@ -136,6 +136,20 @@ check(all("(" not in d.last_name for d in kept), "aucun nom ne conserve de paren
 check(set(headcount_codes(10, 49)) == {"11", "12"}, "fourchette 10-49 -> codes 11 et 12")
 check(headcount_codes(None, None) == [], "sans filtre d'effectif, aucun code impose")
 
+# Ciblage par villes : communes (code INSEE) ou agglomeration (EPCI).
+from app.models import SearchQuery
+from app.sources.sirene import _params_for
+bdx, mer, lone = {"code": "33063", "epci": "243300316"}, {"code": "33281", "epci": "243300316"}, {"code": "99999"}
+check(_params_for(SearchQuery(job_title="", naf_codes=["62.01Z"], cities=[bdx, mer])).get("code_commune") == "33063,33281",
+      "deux villes -> deux codes commune")
+p = _params_for(SearchQuery(job_title="", naf_codes=["62.01Z"], cities=[bdx, mer], agglomeration=True))
+check(p.get("epci") == "243300316" and "code_commune" not in p, "agglomeration -> un seul EPCI, pas de communes")
+p = _params_for(SearchQuery(job_title="", naf_codes=["62.01Z"], cities=[bdx, lone], agglomeration=True))
+check(p.get("epci") == "243300316" and p.get("code_commune") == "99999", "ville sans EPCI : commune seule en complement")
+p = _params_for(SearchQuery(job_title="", naf_codes=["62.01Z"], cities=[bdx], department="75"))
+check("departement" not in p, "les villes priment sur le departement")
+check(_params_for(SearchQuery(job_title="", naf_codes=["62.01Z"], department="33")).get("departement") == "33", "sans ville, le departement reste possible (CLI)")
+
 # --------------------------------------------------------------------------
 print("\n== Resolution de domaine ==")
 check("chapsvision.fr" in candidate_domains("CHAPSVISION SAS"), "candidat evident genere")

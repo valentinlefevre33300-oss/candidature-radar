@@ -87,6 +87,8 @@ class SearchQuery:
     keywords: str = ""                  # secteur/activité recherché côté Sirene
     department: str | None = None
     postal_code: str | None = None
+    cities: list[dict] = field(default_factory=list)   # communes choisies (code INSEE, nom, centre)
+    agglomeration: bool = False                        # etendre chaque commune a son intercommunalite (EPCI)
     naf_codes: list[str] = field(default_factory=list)
     min_headcount: int | None = None
     max_headcount: int | None = None

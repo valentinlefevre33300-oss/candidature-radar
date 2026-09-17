@@ -1,8 +1,9 @@
 /* Vues : tableau de bord des campagnes, assistant de création, page de campagne. */
 import { $, $$, esc, api, upload, state, toast, fmtDate, fmtDay, relTime, sectorLabel, monogram, pretty, pageHead,
          enableTilt, highlightVars, openModal, closeModal, linkedinSearch, queryParam, contactTags,
+         cityPicker, describeCities,
          CATEGORY, CAT_FAMILY, APP_STATUS, CAMP_STATUS, HEADCOUNT } from './core.js';
-import { startSearch, parseZone, headcountRange, renderProgress, updateProgress } from './views-search.js';
+import { startSearch, headcountRange, renderProgress, updateProgress } from './views-search.js';
 
 const statCard = (k, v, d, tone = '') => `<div class="stat ${tone}"><div class="k">${k}</div><div class="v">${v}</div>${d ? `<div class="d">${d}</div>` : ''}</div>`;
 const pct = (a, b) => b ? Math.round(100 * a / b) : 0;
@@ -62,7 +63,7 @@ export async function renderDashboard() {
   }
   el.innerHTML = d.campaigns.map(c => `
     <div class="card-white camp" data-id="${c.id}" style="cursor:pointer">
-      <div><div class="name">${esc(c.name)}</div><div class="where">${esc([c.zone ? `dép. ${c.zone}` : 'France', (c.sectors || '').split(',').filter(Boolean).map(sectorLabel).slice(0, 3).join(', ')].filter(Boolean).join(' · '))}</div></div>
+      <div><div class="name">${esc(c.name)}</div><div class="where">${esc([c.zone || 'France', (c.sectors || '').split(',').filter(Boolean).map(sectorLabel).slice(0, 3).join(', ')].filter(Boolean).join(' · '))}</div></div>
       <div style="display:flex;gap:8px;align-items:center"><span class="status-pill ${c.status}"><i></i>${CAMP_STATUS[c.status] || c.status}</span></div>
       <div class="nums">
         <div>Envoyés<b>${c.sent}</b></div><div>Ouverts<b>${c.opened}</b></div><div>Réponses<b>${c.replied}</b></div>
@@ -91,7 +92,7 @@ export async function renderWizard() {
   const runId = queryParam('run');
   if (!state.wizard || (runId && state.wizard.runId !== +runId)) {
     const s = state.settings || {};
-    state.wizard = { step: 0, job: '', zone: '', head: 'pme', min: '', max: '', limit: 25, market: null, sectors: new Set(),
+    state.wizard = { step: 0, job: '', cities: [], agglo: false, head: 'pme', min: '', max: '', limit: 25, market: null, sectors: new Set(),
                      showAll: false, runId: null, recipients: [], chosen: new Set(), excluded: {},
                      cv: s.settings?.cv_path || '', cvName: s.cv_name || '',
                      subject: s.defaults?.subject || '', body: s.defaults?.body || '', personalize: !!s.claude, preview: null, busy: false };
@@ -103,7 +104,8 @@ export async function renderWizard() {
         // Les colonnes de la recherche font foi si les paramètres sont absents
         // ou illisibles (anciennes recherches lancées depuis le CLI).
         w.job = run.job_title;
-        w.zone = p.postal_code || p.department || run.department || '';
+        w.cities = Array.isArray(p.cities) ? p.cities : [];
+        w.agglo = !!p.agglomeration;
         w.sectors = new Set(p.sectors?.length ? p.sectors : (run.sectors || '').split(',').filter(Boolean));
         w.runId = +runId; w.step = 2;
         await loadRecipients();
@@ -131,8 +133,13 @@ function drawWizard() {
       <div class="sub" style="color:var(--muted);margin:10px 0 28px">On cible les entreprises qui recrutent ce profil — même celles qui n’ont rien publié.</div>
       <div class="field" style="margin-bottom:20px"><label class="lbl">Titre du poste</label>
         <input class="input input-hero on-paper" id="wzJob" placeholder="ex. Product owner, développeur Python…" value="${esc(w.job)}"></div>
-      <div class="grid-3" style="grid-template-columns:1fr 1.6fr .8fr;margin-bottom:20px">
-        <div class="field"><label class="lbl">Zone</label><input class="input" id="wzZone" placeholder="33 ou 33000" value="${esc(w.zone)}"><div class="hint" id="wzZoneHint">Département ou code postal.</div></div>
+      <div class="field" style="margin-bottom:20px">
+        <span class="lbl">Villes</span>
+        <div id="wzCities"></div>
+        <label class="check" style="margin-top:6px"><button type="button" class="switch ${w.agglo ? 'on' : ''}" id="wzAgglo"></button><span>Inclure toute l’agglomération <span class="muted">(Bordeaux → les 28 communes de la métropole)</span></span></label>
+        <div class="hint">Plusieurs villes possibles. Aucune = toute la France.</div>
+      </div>
+      <div class="grid-3" style="grid-template-columns:1.6fr .8fr;margin-bottom:20px">
         <div class="field"><span class="lbl">Taille</span><div class="pills on-paper" id="wzHead">${HEADCOUNT.filter(h => h.key !== 'custom').map(h => `<button class="pill ${w.head === h.key ? 'on' : ''}" data-k="${h.key}">${h.label}</button>`).join('')}</div></div>
         <div class="field"><label class="lbl">Explorer</label><select class="input" id="wzLimit">${[25, 50, 100].map(n => `<option ${w.limit === n ? 'selected' : ''}>${n}</option>`).join('')}</select><div class="hint">entreprises</div></div>
       </div>`;
@@ -144,7 +151,7 @@ function drawWizard() {
     const shown = w.showAll ? rows : rows.slice(0, 6);
     const total = rows.filter(r => w.sectors.has(r.key)).reduce((a, r) => a + r.count, 0);
     inner = `
-      <p class="kicker">D’après ta cible · ${esc(w.job)} · ${w.zone ? 'zone ' + esc(w.zone) : 'France'}</p>
+      <p class="kicker">D’après ta cible · ${esc(w.job)} · ${esc(describeCities(w.cities, w.agglo))}</p>
       <h1>${total.toLocaleString('fr-FR')} entreprises ciblées<span class="dot-accent">.</span></h1>
       <div class="sub" style="color:var(--muted);margin:10px 0 24px">Tout est inclus par défaut. Retire ce que tu veux, le total se met à jour. On explorera les <b style="color:var(--ink)">${w.limit}</b> premières pour trouver à qui écrire.</div>
       <div class="card-white" id="wzSectors">
@@ -225,7 +232,7 @@ function drawWizard() {
       <div class="sub" style="color:var(--muted);margin:10px 0 24px">Vérifie une dernière fois, puis lance les envois.</div>
       <div class="recap">
         <div><span>Poste</span><b>${esc(w.job)}</b></div>
-        <div><span>Cible</span><b>${esc(w.zone ? 'zone ' + w.zone : 'France')} · ${[...w.sectors].map(sectorLabel).slice(0, 3).join(', ')}${w.sectors.size > 3 ? ` +${w.sectors.size - 3}` : ''}</b></div>
+        <div><span>Cible</span><b>${esc(describeCities(w.cities, w.agglo))} · ${[...w.sectors].map(sectorLabel).slice(0, 3).join(', ')}${w.sectors.size > 3 ? ` +${w.sectors.size - 3}` : ''}</b></div>
         <div><span>Destinataires</span><b>${n} personne${n > 1 ? 's' : ''}, une par entreprise</b></div>
         <div><span>Rythme</span><b>${Math.min(n, cap)} par jour max, un toutes les ~4 min, 8 h – 19 h</b></div>
         <div><span>En ton nom, depuis</span><b>${sim ? 'Simulation — aucun envoi réel' : gmail.connected ? `Gmail · ${esc(gmail.email || '')}` : '<span style="color:#c53d3a">Gmail non connecté</span>'}</b></div>
@@ -247,17 +254,15 @@ function bindWizard() {
 
   if (w.step === 0) {
     $('#wzJob').oninput = e => w.job = e.target.value;
-    $('#wzZone').oninput = e => w.zone = e.target.value;
+    cityPicker($('#wzCities'), w.cities, () => {});
+    $('#wzAgglo').onclick = () => { w.agglo = !w.agglo; $('#wzAgglo').classList.toggle('on', w.agglo); };
     $('#wzLimit').onchange = e => w.limit = +e.target.value;
     $$('#wzHead .pill').forEach(b => b.onclick = () => { w.head = b.dataset.k; $$('#wzHead .pill').forEach(x => x.classList.toggle('on', x === b)); });
     $('#wzNext').onclick = async () => {
       if (!w.job.trim()) { $('#wzJob').classList.add('err'); $('#wzJob').focus(); return; }
-      if (parseZone(w.zone) === null) { $('#wzZone').classList.add('err'); $('#wzZoneHint').className = 'hint err'; $('#wzZoneHint').textContent = 'Un département (33) ou un code postal (33000).'; return; }
       $('#wzNext').disabled = true; $('#wzHint').textContent = 'Comptage des entreprises par secteur…';
       try {
-        const hc = headcountRange(w.head, w.min, w.max);
-        const qs = new URLSearchParams({ zone: w.zone.trim(), ...(hc.min_headcount != null ? { min_headcount: hc.min_headcount } : {}), ...(hc.max_headcount != null ? { max_headcount: hc.max_headcount } : {}) });
-        w.market = await api(`/api/market?${qs}`);
+        w.market = await api('/api/market', { method: 'POST', body: JSON.stringify({ cities: w.cities, agglomeration: w.agglo, ...headcountRange(w.head, w.min, w.max) }) });
         w.sectors = new Set(w.market.filter(r => r.count > 0).map(r => r.key));
         w.step = 1; drawWizard();
       } catch (e) { $('#wzNext').disabled = false; $('#wzHint').className = 'hint err'; $('#wzHint').textContent = e.message; }
@@ -268,7 +273,7 @@ function bindWizard() {
     $$('#wzSectors .switch').forEach(b => b.onclick = () => { const k = b.dataset.k; w.sectors.has(k) ? w.sectors.delete(k) : w.sectors.add(k); drawWizard(); });
     const more = $('#wzMore'); if (more) more.onclick = () => { w.showAll = !w.showAll; drawWizard(); };
     $('#wzNext').onclick = async () => {
-      const payload = { job_title: w.job.trim(), sectors: [...w.sectors], ...parseZone(w.zone), limit: w.limit,
+      const payload = { job_title: w.job.trim(), sectors: [...w.sectors], cities: w.cities, agglomeration: w.agglo, limit: w.limit,
                         use_search_engine: true, verify_smtp: false, ...headcountRange(w.head, w.min, w.max) };
       try {
         await startSearch(payload, async (runId) => {
@@ -330,7 +335,7 @@ function bindWizard() {
 
   if (w.step === 5) {
     const create = async () => api('/api/campaigns', { method: 'POST', body: JSON.stringify({
-      name: w.job.trim(), job_title: w.job.trim(), zone: w.zone.trim() || null, sectors: [...w.sectors], run_id: w.runId,
+      name: w.job.trim(), job_title: w.job.trim(), zone: w.cities.length ? describeCities(w.cities, w.agglo) : null, sectors: [...w.sectors], run_id: w.runId,
       recipients: [...w.chosen], subject_tpl: w.subject, body_tpl: w.body, personalize: w.personalize }) });
     $('#wzDraft').onclick = async () => { try { const c = await create(); state.wizard = null; toast('Brouillon enregistré'); location.hash = `#/campagnes/${c.id}`; } catch (e) { toast(e.message); } };
     $('#wzLaunch').onclick = async () => {
@@ -361,7 +366,7 @@ export async function renderCampaign(id) {
     <div class="card-white" style="padding:24px 28px;margin-bottom:22px">
       <div style="display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;align-items:flex-start">
         <div><div class="name" style="font-family:var(--font-serif);font-weight:700;font-size:28px">${esc(c.name)}</div>
-          <div class="muted" style="font-size:13px;margin-top:4px">${esc(c.zone ? `zone ${c.zone}` : 'France')} · créée le ${fmtDay(c.created_at)} · <span class="status-pill ${c.status}"><i></i>${CAMP_STATUS[c.status]}</span></div></div>
+          <div class="muted" style="font-size:13px;margin-top:4px">${esc(c.zone || 'France')} · créée le ${fmtDay(c.created_at)} · <span class="status-pill ${c.status}"><i></i>${CAMP_STATUS[c.status]}</span></div></div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">${actions}<button class="btn btn-white" data-act="edit">✎ Modifier le mail</button><button class="btn btn-text btn-danger" data-act="delete" title="Supprimer">🗑</button></div>
       </div>
       <div style="display:flex;align-items:center;gap:14px;margin-top:18px;font-size:12px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)">

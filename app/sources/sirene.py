@@ -123,20 +123,8 @@ def _parse_company(raw: dict) -> Company:
 
 async def search_companies(client: httpx.AsyncClient, query: SearchQuery) -> list[Company]:
     """Récupère jusqu'à `query.limit` entreprises correspondant aux critères."""
-    params: dict[str, str] = {"per_page": str(PER_PAGE)}
-    if query.naf_codes:
-        params["activite_principale"] = ",".join(query.naf_codes)
-    if query.keywords.strip():
-        params["q"] = query.keywords.strip()
-    if query.department:
-        params["departement"] = query.department
-    if query.postal_code:
-        params["code_postal"] = query.postal_code
-    if query.active_only:
-        params["etat_administratif"] = "A"
-    codes = headcount_codes(query.min_headcount, query.max_headcount)
-    if codes:
-        params["tranche_effectif_salarie"] = ",".join(codes)
+    params = _params_for(query)
+    params["per_page"] = str(PER_PAGE)
 
     if "activite_principale" not in params and "q" not in params:
         raise ValueError("Il faut au moins un secteur (NAF) ou un mot-clé de nom d'entreprise.")
@@ -176,15 +164,33 @@ async def search_companies(client: httpx.AsyncClient, query: SearchQuery) -> lis
 
 
 def _params_for(query: SearchQuery) -> dict[str, str]:
-    """Paramètres HTTP communs à la recherche et au comptage."""
-    params: dict[str, str] = {"per_page": "1"}
+    """Paramètres HTTP communs à la recherche et au comptage.
+
+    Le ciblage géographique passe par les communes (code INSEE) ou, si l'on
+    veut toute l'agglomération, par l'intercommunalité (EPCI) — c'est le seul
+    mode qui respecte tous les autres filtres, la recherche par rayon les ignore.
+    """
+    params: dict[str, str] = {}
     if query.naf_codes:
         params["activite_principale"] = ",".join(query.naf_codes)
     if query.keywords.strip():
         params["q"] = query.keywords.strip()
-    if query.department:
+    if query.cities:
+        epcis = sorted({str(c.get("epci")) for c in query.cities if c.get("epci")})
+        if query.agglomeration and len(epcis) == len({c.get("code") for c in query.cities if c.get("epci")})                 and all(c.get("epci") for c in query.cities):
+            params["epci"] = ",".join(epcis)
+        elif query.agglomeration and epcis:
+            # Certaines villes n'ont pas d'intercommunalité connue : on garde les
+            # agglomérations disponibles et les communes seules pour les autres.
+            params["epci"] = ",".join(epcis)
+            lone = [str(c.get("code")) for c in query.cities if not c.get("epci") and c.get("code")]
+            if lone:
+                params["code_commune"] = ",".join(lone)
+        else:
+            params["code_commune"] = ",".join(str(c.get("code")) for c in query.cities if c.get("code"))
+    elif query.department:
         params["departement"] = query.department
-    if query.postal_code:
+    elif query.postal_code:
         params["code_postal"] = query.postal_code
     if query.active_only:
         params["etat_administratif"] = "A"
@@ -197,7 +203,8 @@ def _params_for(query: SearchQuery) -> dict[str, str]:
 async def count_companies(client: httpx.AsyncClient, query: SearchQuery) -> int:
     """Nombre total d'entreprises correspondant aux critères, en une requête."""
     try:
-        resp = await client.get(SIRENE_API, params=_params_for(query), timeout=REQUEST_TIMEOUT,
+        resp = await client.get(SIRENE_API, params={**_params_for(query), "per_page": "1"},
+                                timeout=REQUEST_TIMEOUT,
                                 headers={"User-Agent": USER_AGENT})
         resp.raise_for_status()
         return int(resp.json().get("total_results") or 0)

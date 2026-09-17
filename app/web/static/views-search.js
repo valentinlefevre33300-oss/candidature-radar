@@ -1,5 +1,6 @@
 /* Vues : Recherche, Résultats d'une recherche, Suivi. */
 import { $, $$, esc, api, state, toast, fmtDate, sectorLabel, monogram, pageHead, enableTilt, contactTags,
+         cityPicker, describeCities, runZone,
          STATUS, CATEGORY, CAT_FAMILY, SECTOR_FAMILY, FAMILY_INK, HEADCOUNT } from './core.js';
 
 /* ======================= recherche ======================= */
@@ -29,9 +30,10 @@ export function renderForm() {
     </div>
     <div class="grid-3" style="margin-bottom:22px">
       <div class="field">
-        <label class="lbl" for="zone">Zone</label>
-        <input class="input" id="zone" placeholder="ex. 33 ou 33000" value="${esc(f.zone)}" autocomplete="off">
-        <div class="hint" id="zoneHint">Département ou code postal. Vide = toute la France.</div>
+        <span class="lbl">Villes</span>
+        <div id="cities"></div>
+        <label class="check" style="margin-top:4px"><button type="button" class="switch ${f.agglo ? 'on' : ''}" id="agglo"></button><span>Inclure toute l’agglomération</span></label>
+        <div class="hint">Plusieurs villes possibles. Aucune = toute la France.</div>
       </div>
       <div class="field">
         <span class="lbl">Taille d’entreprise</span>
@@ -71,7 +73,8 @@ export function renderForm() {
     </div>`;
 
   $('#job').oninput = e => { f.job = e.target.value; $('#job').classList.remove('err'); };
-  $('#zone').oninput = e => { f.zone = e.target.value; $('#zone').classList.remove('err'); $('#zoneHint').className = 'hint'; $('#zoneHint').textContent = 'Département ou code postal. Vide = toute la France.'; };
+  cityPicker($('#cities'), f.cities, () => {});
+  $('#agglo').onclick = () => { f.agglo = !f.agglo; $('#agglo').classList.toggle('on', f.agglo); };
   $('#limit').onchange = e => f.limit = +e.target.value;
   $('#kw').oninput = e => f.keywords = e.target.value;
   $('#useSearch').onchange = e => f.useSearch = e.target.checked;
@@ -113,14 +116,6 @@ function renderChips(filter) {
   $('#secHint').textContent = n ? `${n} sélectionné${n > 1 ? 's' : ''}` : 'Choisis-en au moins un.';
 }
 
-export function parseZone(raw) {
-  const z = (raw || '').trim().toUpperCase();
-  if (!z) return {};
-  if (/^\d{5}$/.test(z)) return { postal_code: z };
-  if (/^(\d{2,3}|2A|2B)$/.test(z)) return { department: z };
-  return null;
-}
-
 export function headcountRange(head, min, max) {
   if (head === 'custom') return { min_headcount: min ? +min : null, max_headcount: max ? +max : null };
   const h = HEADCOUNT.find(x => x.key === head) || HEADCOUNT[0];
@@ -139,12 +134,10 @@ export async function startSearch(payload, onDone) {
 async function launch() {
   const f = state.form; let ok = true;
   if (!f.job.trim()) { $('#job').classList.add('err'); $('#job').focus(); ok = false; }
-  const zone = parseZone(f.zone);
-  if (zone === null) { $('#zone').classList.add('err'); $('#zoneHint').className = 'hint err'; $('#zoneHint').textContent = 'Un département (33) ou un code postal (33000).'; ok = false; }
   if (!f.sectors.size) { $('#secHint').innerHTML = '<span class="hint err">Choisis au moins un secteur.</span>'; ok = false; }
   if (!ok) return;
-  const payload = { job_title: f.job.trim(), sectors: [...f.sectors], keywords: f.keywords, ...zone, limit: f.limit,
-                    use_search_engine: f.useSearch, verify_smtp: f.smtp, ...headcountRange(f.head, f.min, f.max) };
+  const payload = { job_title: f.job.trim(), sectors: [...f.sectors], keywords: f.keywords, cities: f.cities, agglomeration: f.agglo,
+                    limit: f.limit, use_search_engine: f.useSearch, verify_smtp: f.smtp, ...headcountRange(f.head, f.min, f.max) };
   $('#go').disabled = true;
   try {
     await startSearch(payload, (runId) => { location.hash = `#/run/${runId}`; });
@@ -200,7 +193,7 @@ async function loadRuns() {
     const secs = (r.sectors || '').split(',').filter(Boolean).map(sectorLabel);
     const fam = SECTOR_FAMILY[(r.sectors || '').split(',')[0]] || '';
     const secTxt = secs.length > 2 ? `${secs.slice(0, 2).join(', ')} +${secs.length - 2}` : secs.join(', ');
-    const zone = r.department ? `dép. ${r.department}` : '';
+    const zone = runZone(r);
     const day = r.started_at ? new Date(r.started_at).getDate() : '·';
     const st = r.status === 'echec' ? '<span class="tag danger">échec</span>' : r.status === 'en cours' ? '<span class="tag">en cours</span>' : '';
     return `<div class="item clickable" data-id="${r.id}">
@@ -222,7 +215,7 @@ export async function renderRun(id) {
   catch (e) { view.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
 
   const secs = (run.sectors || '').split(',').filter(Boolean).map(sectorLabel).join(', ');
-  const zone = run.department ? `dép. ${run.department}` : '';
+  const zone = runZone(run);
   const r = state.results; r.open = new Set(); r.dismissedBanner = false;
 
   view.innerHTML = `

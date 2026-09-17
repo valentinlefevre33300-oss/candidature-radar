@@ -16,8 +16,10 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Stre
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+import httpx
+
 from .. import campaigns as engine
-from .. import compose, db, gmail
+from .. import compose, db, geo, gmail
 from ..config import BASE_URL, DAILY_CAP, DRY_RUN, MONTHLY_CAP, PUBLIC_URL, ROOT
 from ..models import SearchQuery
 from ..naf import catalogue, codes_for
@@ -50,6 +52,8 @@ class SearchPayload(BaseModel):
     sectors: list[str] = Field(default_factory=list)
     naf_codes: list[str] = Field(default_factory=list)
     keywords: str = ""
+    cities: list[dict] = Field(default_factory=list)   # communes choisies (code INSEE, nom, EPCI…)
+    agglomeration: bool = False                        # étendre chaque ville à son intercommunalité
     department: str | None = None
     postal_code: str | None = None
     min_headcount: int | None = None
@@ -86,6 +90,13 @@ async def sectors() -> list[dict]:
     return catalogue()
 
 
+@app.get("/api/geo/communes")
+async def geo_communes(q: str = "") -> list[dict]:
+    """Autocomplétion des villes (API géographique de l'État), les plus peuplées d'abord."""
+    async with httpx.AsyncClient() as client:
+        return [c.to_dict() for c in await geo.suggest_cities(client, q)]
+
+
 @app.get("/api/runs")
 async def runs() -> list[dict]:
     return db.list_runs()
@@ -101,11 +112,14 @@ async def start_search(payload: SearchPayload) -> dict:
                    "present dans le nom des entreprises visees.",
         )
 
+    cities = [c for c in payload.cities if c.get("code")]
     query = SearchQuery(
         job_title=payload.job_title.strip(),
         keywords=payload.keywords.strip(),
         department=(payload.department or "").strip() or None,
         postal_code=(payload.postal_code or "").strip() or None,
+        cities=cities,
+        agglomeration=payload.agglomeration,
         naf_codes=list(dict.fromkeys(naf)),
         min_headcount=payload.min_headcount,
         max_headcount=payload.max_headcount,
@@ -115,7 +129,7 @@ async def start_search(payload: SearchPayload) -> dict:
     run_id = db.start_run(
         job_title=query.job_title,
         sectors=",".join(payload.sectors),
-        department=query.department,
+        department=query.department or (str(cities[0].get("department") or "") or None if cities else None),
         params=json.dumps(payload.model_dump(), ensure_ascii=False),
     )
     job = Job(run_id)
@@ -417,10 +431,19 @@ async def dashboard() -> dict:
     }
 
 
-@app.get("/api/market")
-async def market(zone: str | None = None, min_headcount: int | None = None,
-                 max_headcount: int | None = None) -> list[dict]:
-    return await engine.market((zone or "").strip() or None, min_headcount, max_headcount)
+class MarketPayload(BaseModel):
+    cities: list[dict] = Field(default_factory=list)
+    agglomeration: bool = False
+    zone: str | None = None
+    min_headcount: int | None = None
+    max_headcount: int | None = None
+
+
+@app.post("/api/market")
+async def market(payload: MarketPayload) -> list[dict]:
+    cities = [c for c in payload.cities if c.get("code")]
+    return await engine.market(cities, payload.agglomeration, (payload.zone or "").strip() or None,
+                               payload.min_headcount, payload.max_headcount)
 
 
 @app.get("/api/runs/{run_id}/recipients")

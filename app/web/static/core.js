@@ -44,7 +44,7 @@ export const HEADCOUNT = [
 export const state = {
   sectors: [],
   settings: null,
-  form: { job: '', zone: '', head: 'pme', min: '', max: '', limit: 25, sectors: new Set(), keywords: '', useSearch: true, smtp: false },
+  form: { job: '', cities: [], agglo: false, head: 'pme', min: '', max: '', limit: 25, sectors: new Set(), keywords: '', useSearch: true, smtp: false },
   job: null,
   results: { filter: 'all', hideLow: true, q: '', open: new Set(), dismissedBanner: false },
   suivi: { filter: 'a_contacter' },
@@ -140,7 +140,49 @@ export function closeModal() {
 }
 function escClose(e) { if (e.key === 'Escape') closeModal(); }
 
+/* Sélecteur de villes : saisie avec autocomplétion, plusieurs villes en pilules.
+   `selected` est un tableau muté en place ; `onChange` est appelé après chaque ajout/retrait. */
+export function cityPicker(container, selected, onChange) {
+  let timer = null, suggestions = [];
+  const draw = () => {
+    container.innerHTML = `
+      <div class="pills" style="margin-bottom:${selected.length ? 8 : 0}px">${selected.map((c, i) =>
+        `<span class="pill on" style="gap:8px">${esc(c.name)} <small style="opacity:.7">${esc(c.department)}</small><button type="button" data-rm="${i}" aria-label="Retirer" style="color:#fff;opacity:.8;font-size:15px;line-height:1">×</button></span>`).join('')}</div>
+      <div class="picker"><input class="input" placeholder="${selected.length ? 'Ajouter une ville…' : 'ex. Bordeaux, Mérignac…'}" autocomplete="off"><div class="drop hidden"></div></div>`;
+    $$('[data-rm]', container).forEach(b => b.onclick = () => { selected.splice(+b.dataset.rm, 1); draw(); onChange(); });
+    const input = $('input', container), drop = $('.drop', container);
+    const showDrop = () => {
+      const list = suggestions.filter(s => !selected.some(x => x.code === s.code));
+      drop.innerHTML = list.map((s, i) => `<button type="button" data-i="${i}"><b>${esc(s.name)}</b> <span class="muted">(${esc(s.department)})</span>${s.population ? `<span class="muted" style="float:right;font-size:12px">${(s.population).toLocaleString('fr-FR')} hab.</span>` : ''}</button>`).join('');
+      drop.classList.toggle('hidden', !list.length);
+      $$('[data-i]', drop).forEach(b => b.onclick = () => { selected.push(list[+b.dataset.i]); suggestions = []; draw(); onChange(); $('input', container).focus(); });
+    };
+    input.oninput = () => {
+      clearTimeout(timer);
+      const q = input.value.trim();
+      if (q.length < 2) { suggestions = []; drop.classList.add('hidden'); return; }
+      timer = setTimeout(async () => { try { suggestions = await api(`/api/geo/communes?q=${encodeURIComponent(q)}`); } catch { suggestions = []; } showDrop(); }, 180);
+    };
+    input.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); const first = $('[data-i]', drop); if (first) first.click(); } if (e.key === 'Escape') drop.classList.add('hidden'); };
+    input.onblur = () => setTimeout(() => drop.classList.add('hidden'), 150);
+  };
+  draw();
+}
+export const describeCities = (cities, agglo) => {
+  const names = (cities || []).map(c => c.name).filter(Boolean);
+  if (!names.length) return 'toute la France';
+  return names.slice(0, 3).join(', ') + (names.length > 3 ? ` +${names.length - 3}` : '') + (agglo ? ' · agglomération' : '');
+};
+
 export const linkedinSearch = (r) => 'https://www.linkedin.com/search/results/people/?keywords='
   + encodeURIComponent([r.first_name, r.last_name, pretty(r.company_name)].filter(Boolean).join(' '));
+
+/* Zone lisible d'une recherche : villes des paramètres, sinon le département. */
+export function runZone(run) {
+  let p = {}; try { p = JSON.parse(run.params || '{}'); } catch {}
+  if (p.cities && p.cities.length) return describeCities(p.cities, p.agglomeration);
+  if (p.postal_code) return p.postal_code;
+  return run.department ? `dép. ${run.department}` : '';
+}
 
 export const queryParam = (name) => new URLSearchParams((location.hash.split('?')[1] || '')).get(name);
