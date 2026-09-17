@@ -205,11 +205,11 @@ Première mise en ligne, depuis le dossier du projet :
 
 ```bash
 fly auth login
-fly launch --no-deploy --copy-config --name leradar --region cdg
-fly volumes create leradar_data --region cdg --size 1
-fly secrets set GOOGLE_CLIENT_ID=… GOOGLE_CLIENT_SECRET=… ANTHROPIC_API_KEY=…
-fly deploy
-fly certs add leradar.valentinlefevre.io
+fly apps create leradar
+fly volumes create leradar_data --region cdg --size 1 -a leradar
+fly secrets set GOOGLE_CLIENT_ID=… GOOGLE_CLIENT_SECRET=… ANTHROPIC_API_KEY=… -a leradar
+fly deploy -a leradar
+fly certs add leradar.valentinlefevre.io -a leradar
 ```
 
 Puis, dans hPanel → zone DNS de `valentinlefevre.io` : supprimer le sous-domaine
