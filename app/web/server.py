@@ -45,14 +45,14 @@ _OPEN_PREFIXES = ("/t/", "/login", "/api/auth/", "/api/gmail/callback", "/health
 def _is_local(request) -> bool:
     """Requête venue du poste lui-même, sans rien devant.
 
-    Derrière un reverse proxy (hébergeur), uvicorn voit 127.0.0.1 pour tout le
+    Derrière un reverse proxy (tunnel Cloudflare, hébergeur), uvicorn voit 127.0.0.1 pour tout le
     monde : l'en-tête transmis par le proxy et le nom d'hôte demandé trahissent
     alors la vraie provenance, et on exige la connexion.
     """
     client = (request.client.host if request.client else "") or ""
     if client not in _LOCAL_HOSTS:
         return False
-    if any(request.headers.get(h) for h in ("x-forwarded-for", "x-real-ip", "forwarded")):
+    if any(request.headers.get(h) for h in ("x-forwarded-for", "x-real-ip", "forwarded", "cf-connecting-ip")):
         return False
     host = request.headers.get("host", "").rsplit(":", 1)[0].strip("[]")
     return host in _LOCAL_HOSTS

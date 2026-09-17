@@ -192,34 +192,41 @@ demandées : `gmail.send` et `gmail.readonly` — envoyer, et lire les réponses
 **dans les fils des mails envoyés par l'outil**, pour les classer. Le reste de la boîte
 n'est jamais consulté ; le code qui lit un fil est dans `app/gmail.py`, une fonction.
 
-## Déploiement (Fly.io, domaine `leradar.valentinlefevre.io`)
+## Mise en ligne : le PC + un tunnel Cloudflare (`leradar.site`)
 
-L'hébergement web Hostinger du portfolio ne fait tourner que des fichiers statiques :
-l'outil, lui, est un processus Python permanent (API, boucle d'envoi, lecture des
-réponses, SQLite). Il tourne donc sur **Fly.io**, comme Le Brief, et le sous-domaine
-Hostinger pointe dessus. Fichiers : `Dockerfile`, `fly.toml` (app `leradar`, région
-Paris, volume `/data`, machine toujours allumée), `.github/workflows/deploy.yml`
-(redéploie à chaque push si le secret de dépôt `FLY_API_TOKEN` existe).
+L'hébergement web Hostinger ne fait tourner que des fichiers statiques ; l'outil, lui,
+est un processus Python permanent (API, boucle d'envoi, lecture des réponses, SQLite).
+Il tourne donc **sur le PC**, et le domaine `leradar.site` y mène par un **tunnel
+Cloudflare** (gratuit) : `cloudflared` ouvre une connexion sortante vers Cloudflare, qui
+sert `https://leradar.site` avec son certificat — rien à ouvrir sur la box, pas d'IP
+à exposer. Limite assumée : quand le PC est éteint, le site est hors ligne et rien ne
+part (les envois manqués repartent à l'heure suivante d'ouverture).
 
-Première mise en ligne, depuis le dossier du projet :
+Mise en place, une fois :
 
-```bash
-fly auth login
-fly apps create leradar
-fly volumes create leradar_data --region cdg --size 1 -a leradar
-fly secrets set GOOGLE_CLIENT_ID=… GOOGLE_CLIENT_SECRET=… ANTHROPIC_API_KEY=… -a leradar
-fly deploy -a leradar
-fly certs add leradar.valentinlefevre.io -a leradar
-```
+1. Compte Cloudflare (gratuit) → *Add a site* → `leradar.site`, plan Free → Cloudflare
+   donne deux serveurs de noms. Dans hPanel → Domaines → `leradar.site` → serveurs de
+   noms : les remplacer par ceux de Cloudflare.
+2. `winget install Cloudflare.cloudflared`, puis `cloudflared tunnel login` (choisir
+   `leradar.site` dans le navigateur), `cloudflared tunnel create leradar`.
+3. `%USERPROFILE%\.cloudflared\config.yml` :
+   ```yaml
+   tunnel: <identifiant donné par create>
+   credentials-file: C:\Users\<toi>\.cloudflared\<identifiant>.json
+   ingress:
+     - hostname: leradar.site
+       service: http://localhost:8010
+     - service: http_status:404
+   ```
+   puis `cloudflared tunnel route dns leradar leradar.site` (crée l'enregistrement DNS).
+4. `.env` : `CR_BASE_URL=https://leradar.site` et `CR_PUBLIC_URL=https://leradar.site`.
+   Google Cloud → client OAuth → URI de redirection `https://leradar.site/api/gmail/callback`.
+5. `.\deploy\pc\install-tasks.ps1` : deux tâches planifiées à l'ouverture de session
+   (serveur sur `127.0.0.1:8010`, tunnel), journaux dans `data\logs\`. Retirer avec
+   `uninstall-tasks.ps1`. Redémarrer le serveur après une modification :
+   `Stop-ScheduledTask` puis `Start-ScheduledTask -TaskName "Candidature Radar - serveur"`.
 
-Puis, dans hPanel → zone DNS de `valentinlefevre.io` : supprimer le sous-domaine
-`leradar` créé côté hébergement, et ajouter l'enregistrement que `fly certs add`
-indique (`CNAME leradar → leradar.fly.dev`, ou les A/AAAA donnés). Dans Google
-Cloud → le client OAuth : ajouter l'URI de redirection
-`https://leradar.valentinlefevre.io/api/gmail/callback`. Enfin, sur le site :
-se connecter avec Google, relier Gmail dans Réglages, importer le CV, désactiver
-la simulation. Les données locales (`data/`) ne sont pas copiées : le site part
-d'une base vide.
+Le `Dockerfile` reste utile le jour où l'outil part sur une vraie machine (VPS).
 
 ## Connexion à l'interface
 
