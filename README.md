@@ -48,9 +48,19 @@ cp .env.example .env    # optionnel
 .venv/Scripts/python.exe -m uvicorn app.web.server:app --port 8010
 ```
 
-Puis <http://localhost:8010> : on choisit un poste, un ou plusieurs secteurs, une zone,
-une fourchette d'effectif. La progression s'affiche entreprise par entreprise, et les
-résultats sont exportables en CSV.
+Puis <http://localhost:8010>. Trois vues :
+
+- **Recherche** — le poste visé, une zone (`33` ou `33000`), une taille d'entreprise
+  (défaut 10–249, là où ça rend), des secteurs en pilules. La progression s'affiche
+  entreprise par entreprise ; l'historique des recherches est en dessous.
+- **Résultats** — lignes triées par score, filtres par catégorie, monogramme par
+  entreprise. Un clic sur une ligne explique le score. **Suivre** ajoute la personne
+  au suivi, **Écarter** la range hors de vue. Export CSV.
+- **Suivi** — chaque personne avec son statut (à contacter → contacté → relancé →
+  a répondu), une note, et la recherche d'où elle vient. Export CSV.
+
+L'interface reprend le système de design de [Le Brief](https://veille-tech-543e9e.fly.dev/) :
+blanc, cartes grises sans bordure, titres en Fraunces, corps en Poppins, un seul accent indigo.
 
 ### Ligne de commande
 
@@ -106,8 +116,9 @@ Concrètement : un message ciblé et personnalisé à une personne dont c'est le
 oui. Un envoi de masse à toutes les adresses d'un export, non — c'est du spam, c'est
 inefficace, et ça brûle le domaine de l'expéditeur.
 
-Le bouton **Contacté** journalise l'adresse pour qu'elle ne ressorte plus dans les
-recherches suivantes : personne ne reçoit deux fois la même candidature.
+Le **Suivi** garde la trace de chaque personne démarchée. Une adresse déjà suivie reste
+visible dans les résultats des recherches suivantes, annotée de son statut : personne ne
+reçoit deux fois la même candidature.
 
 ## Configuration
 

@@ -65,6 +65,7 @@ SERVICE_PROVIDER_DOMAINS = {
 }
 
 _TITLE_WINDOW = 110  # caractères examinés de part et d'autre d'une adresse
+_DIGIT_TOKEN = re.compile(r"\S*\d\S*")  # « +33(0)1 », « 137 », « 92100 »…
 
 
 def strip_accents(value: str) -> str:
@@ -114,22 +115,23 @@ def find_role_near(text: str, email: str) -> tuple[str | None, str | None]:
     if position == -1:
         return None, None
     window = lowered[max(0, position - _TITLE_WINDOW): position + len(target) + _TITLE_WINDOW]
-    # L'adresse elle-meme pollue l'extrait : on la retire avant de decouper.
+    # L'adresse elle-même, les téléphones, numéros de rue et codes postaux
+    # polluent l'extrait sans rien dire de la fonction : on les retire, et on
+    # normalise les espaces pour travailler sur des mots entiers.
     window = window.replace(target, " ")
+    window = _DIGIT_TOKEN.sub(" ", window)
+    joined = " ".join(re.sub(r"[|•·]+", " ", window).split())
     for category, keywords in ROLE_KEYWORDS.items():
         for keyword in keywords:
-            if keyword not in window:
+            # Frontières de mots obligatoires : « coo » matchait « coordonnées »
+            # et faisait passer n'importe quelle boîte pour une direction.
+            match = re.search(rf"(?<![a-z0-9]){re.escape(keyword)}(?![a-z0-9])", joined)
+            if not match:
                 continue
-            at = window.find(keyword)
-            excerpt = window[max(0, at - 28): at + len(keyword) + 28]
-            # On coupe aux frontieres de mots et on ecarte le bruit typographique
-            # (numeros de rue, telephones, ponctuation de mise en page).
-            excerpt = re.sub(r"[|•·]+", " ", excerpt)
-            excerpt = re.sub(r"\s{2,}", " ", excerpt).strip(" .,;:-")
-            words = excerpt.split()
-            if words and len(words) > 2:
-                words = words[1:] if len(words[0]) < 3 else words
-            return category, " ".join(words)[:90]
+            before = joined[:match.start()].split()[-4:]
+            after = joined[match.end():].split()[:3]
+            excerpt = " ".join(before + [keyword] + after).strip(" .,;:-")
+            return category, excerpt[:90]
     return None, None
 
 

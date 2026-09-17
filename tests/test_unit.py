@@ -5,6 +5,7 @@ Chaque bloc correspond a un defaut rencontre en conditions reelles pendant la
 construction de l'outil. Lancer : .venv/Scripts/python.exe tests/test_unit.py
 """
 import pathlib
+import re
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
@@ -12,7 +13,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 from bs4 import BeautifulSoup
 
 from app.extract.emails import EMAIL_RE, OBFUSCATED_RE, decode_cloudflare, extract_emails
-from app.extract.people import classify_mailbox, guess_name_from_local, infer_pattern, render
+from app.extract.people import (classify_mailbox, find_role_near, guess_name_from_local,
+                                infer_pattern, render)
 from app.models import Company, Contact, Director
 from app.pipeline import _build_contact, _infer_director_emails
 from app.resolve.domain import candidate_domains, company_tokens, name_matches_page
@@ -178,6 +180,21 @@ check(not matches_director(make("contact@acme.fr"), firm), "une boite generique 
 ranked = dedupe_and_rank([generic, rh, boss, vendor, rh])
 check(len(ranked) == 4, f"les doublons sont fusionnes (obtenu {len(ranked)})")
 check(ranked[0].email == rh.email, "le meilleur contact arrive en tete")
+
+# --------------------------------------------------------------------------
+print("\n== Fonction lue autour de l'adresse ==")
+# Regression : « coo » matchait dans « coordonnees » et promouvait tibco@ en direction.
+cat, _ = find_role_near("Saint-Aignan-de-Grandlieu coordonnees de contact tibco le "
+                        "tibco@tibco.fr 02 40 00 00 00", "tibco@tibco.fr")
+check(cat is None, f"« coordonnees » n'est pas lu comme la fonction COO (obtenu {cat})")
+cat, ex = find_role_near("Aude Balleydier Responsable Ressources Humaines +33(0)1 49 09 68 81 "
+                         "aude.b@x.fr Cegedim recrutement 137 rue d'Aguesseau 92100 Boulogne",
+                         "aude.b@x.fr")
+check(cat == "rh", f"la fonction RH est lue (obtenu {cat})")
+check(not re.search(r"\d", ex or ""), f"l'extrait ne contient ni telephone ni adresse ({ex!r})")
+check((ex or "").startswith("aude balleydier responsable"), f"l'extrait commence sur un mot entier ({ex!r})")
+cat, _ = find_role_near("Jean Martin, CEO - jean@acme.fr", "jean@acme.fr")
+check(cat == "direction", "un sigle isole (CEO) est bien reconnu")
 
 # --------------------------------------------------------------------------
 print("\n== Contexte de page : pas de promotion abusive ==")

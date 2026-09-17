@@ -16,7 +16,23 @@ from typing import Iterator
 from .config import DB_PATH, EXPORT_DIR
 from .models import Company, Contact
 
-SCHEMA = """
+# Définition de la table de suivi, partagée entre la création et la migration.
+_OUTREACH_DDL = """
+    email        TEXT PRIMARY KEY,
+    status       TEXT NOT NULL DEFAULT 'a_contacter',
+    note         TEXT DEFAULT '',
+    company_name TEXT,
+    first_name   TEXT,
+    last_name    TEXT,
+    role_title   TEXT,
+    category     TEXT,
+    score        REAL,
+    run_id       INTEGER,
+    added_at     TEXT NOT NULL,
+    updated_at   TEXT NOT NULL
+"""
+
+SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS runs (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     started_at  TEXT NOT NULL,
@@ -66,12 +82,10 @@ CREATE TABLE IF NOT EXISTS contacts (
     PRIMARY KEY (email, run_id)
 );
 
--- Journal des envois : renseigné à la main, jamais par le scraper.
-CREATE TABLE IF NOT EXISTS outreach (
-    email      TEXT PRIMARY KEY,
-    contacted_at TEXT NOT NULL,
-    note       TEXT
-);
+-- Suivi des envois : renseigné à la main depuis l'interface, jamais par le
+-- scraper. On y fige les infos du contact au moment de l'ajout, pour que le
+-- suivi reste lisible même si les recherches d'origine sont purgées.
+CREATE TABLE IF NOT EXISTS outreach ({_OUTREACH_DDL});
 
 CREATE INDEX IF NOT EXISTS idx_contacts_run ON contacts(run_id);
 CREATE INDEX IF NOT EXISTS idx_contacts_score ON contacts(score DESC);
@@ -98,9 +112,50 @@ def connect(path: Path | None = None) -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
+OUTREACH_STATUSES = ("a_contacter", "contacte", "relance", "repondu", "ecarte")
+
+# Colonnes ajoutées après la première version de la table `outreach`, qui ne
+# connaissait que « contacté ». `CREATE TABLE IF NOT EXISTS` n'altère pas une
+# table existante : on complète à la main. Les anciennes lignes prennent le
+# statut « contacté », c'est ce qu'elles signifiaient.
+_OUTREACH_UPGRADE = {
+    "status": "TEXT NOT NULL DEFAULT 'contacte'",
+    "note": "TEXT DEFAULT ''",
+    "company_name": "TEXT", "first_name": "TEXT", "last_name": "TEXT",
+    "role_title": "TEXT", "category": "TEXT", "score": "REAL", "run_id": "INTEGER",
+    "added_at": "TEXT", "updated_at": "TEXT",
+}
+
+
+def _upgrade_outreach(conn: sqlite3.Connection) -> None:
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(outreach)")}
+    for column, decl in _OUTREACH_UPGRADE.items():
+        if column not in existing:
+            conn.execute(f"ALTER TABLE outreach ADD COLUMN {column} {decl}")
+
+    # L'ancienne colonne `contacted_at NOT NULL` ferait échouer toute insertion
+    # qui ne la renseigne pas. SQLite ne sait pas relâcher une contrainte : on
+    # reconstruit la table en reportant les dates, comme le veut la procédure
+    # officielle de migration.
+    if "contacted_at" in existing:
+        columns = ("email, status, note, company_name, first_name, last_name, role_title, "
+                   "category, score, run_id, added_at, updated_at")
+        conn.executescript(f"""
+            CREATE TABLE outreach_v2 ({_OUTREACH_DDL});
+            INSERT INTO outreach_v2 ({columns})
+            SELECT email, COALESCE(status, 'contacte'), COALESCE(note, ''), company_name,
+                   first_name, last_name, role_title, category, score, run_id,
+                   COALESCE(added_at, contacted_at), COALESCE(updated_at, contacted_at)
+            FROM outreach;
+            DROP TABLE outreach;
+            ALTER TABLE outreach_v2 RENAME TO outreach;
+        """)
+
+
 def init_db(path: Path | None = None) -> None:
     with connect(path) as conn:
         conn.executescript(SCHEMA)
+        _upgrade_outreach(conn)
 
 
 def start_run(job_title: str, sectors: str, department: str | None, params: str) -> int:
@@ -156,20 +211,74 @@ def save_contacts(run_id: int, contacts: list[Contact]) -> None:
         )
 
 
-def already_contacted() -> set[str]:
-    """Adresses déjà démarchées, à exclure des nouveaux résultats."""
+# ------------------------------------------------------------------ suivi ---
+
+OUTREACH_SNAPSHOT = ("company_name", "first_name", "last_name", "role_title",
+                     "category", "score", "run_id")
+
+
+def list_outreach(status: str | None = None) -> list[dict]:
     with connect() as conn:
-        return {row["email"] for row in conn.execute("SELECT email FROM outreach")}
+        if status:
+            rows = conn.execute(
+                "SELECT * FROM outreach WHERE status=? ORDER BY updated_at DESC", (status,))
+        else:
+            rows = conn.execute("SELECT * FROM outreach ORDER BY updated_at DESC")
+        return [dict(r) for r in rows]
+
+
+def upsert_outreach(email: str, status: str, note: str = "", **snapshot) -> None:
+    """Ajoute un contact au suivi, ou met à jour son statut s'il y est déjà.
+
+    Les champs de `snapshot` (entreprise, nom, fonction…) ne sont écrits qu'à
+    la création : ils décrivent le contact tel qu'il a été trouvé. Une note
+    vide ne remplace jamais une note existante.
+    """
+    values = {key: snapshot.get(key) for key in OUTREACH_SNAPSHOT}
+    now = _now()
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO outreach (email, status, note, company_name, first_name, last_name, "
+            "role_title, category, score, run_id, added_at, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(email) DO UPDATE SET status=excluded.status, "
+            "updated_at=excluded.updated_at, "
+            "note=CASE WHEN excluded.note != '' THEN excluded.note ELSE outreach.note END",
+            (email, status, note or "", values["company_name"], values["first_name"],
+             values["last_name"], values["role_title"], values["category"], values["score"],
+             values["run_id"], now, now),
+        )
+
+
+def update_outreach(email: str, status: str | None = None, note: str | None = None) -> bool:
+    """Change le statut et/ou la note. Renvoie False si l'adresse n'est pas suivie."""
+    assignments, params = ["updated_at=?"], [_now()]
+    if status is not None:
+        assignments.append("status=?")
+        params.append(status)
+    if note is not None:
+        assignments.append("note=?")
+        params.append(note)
+    params.append(email)
+    with connect() as conn:
+        cur = conn.execute(f"UPDATE outreach SET {', '.join(assignments)} WHERE email=?", params)
+        return cur.rowcount > 0
+
+
+def delete_outreach(email: str) -> None:
+    with connect() as conn:
+        conn.execute("DELETE FROM outreach WHERE email=?", (email,))
+
+
+def already_contacted() -> set[str]:
+    """Adresses à qui un mail est effectivement parti (utilisé par le CLI)."""
+    with connect() as conn:
+        return {row["email"] for row in conn.execute(
+            "SELECT email FROM outreach WHERE status IN ('contacte', 'relance', 'repondu')")}
 
 
 def mark_contacted(email: str, note: str = "") -> None:
-    with connect() as conn:
-        conn.execute(
-            "INSERT INTO outreach (email, contacted_at, note) VALUES (?,?,?) "
-            "ON CONFLICT(email) DO UPDATE SET contacted_at=excluded.contacted_at, "
-            "note=excluded.note",
-            (email, _now(), note),
-        )
+    upsert_outreach(email, "contacte", note)
 
 
 def seen_before(emails: list[str]) -> set[str]:
@@ -189,11 +298,20 @@ def list_runs(limit: int = 30) -> list[dict]:
             "SELECT * FROM runs ORDER BY id DESC LIMIT ?", (limit,))]
 
 
+def get_run(run_id: int) -> dict | None:
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
+        return dict(row) if row else None
+
+
 def run_contacts(run_id: int) -> list[dict]:
     with connect() as conn:
         return [dict(r) for r in conn.execute(
-            "SELECT c.*, co.city, co.size, co.domain FROM contacts c "
+            "SELECT c.*, co.city, co.size, co.domain, "
+            "o.status AS outreach_status, o.note AS outreach_note "
+            "FROM contacts c "
             "LEFT JOIN companies co ON co.siren = c.company_siren "
+            "LEFT JOIN outreach o ON o.email = c.email "
             "WHERE c.run_id=? ORDER BY c.score DESC", (run_id,))]
 
 
@@ -215,5 +333,21 @@ def export_csv(run_id: int) -> Path:
                                 delimiter=";")
         writer.writeheader()
         for row in rows:
+            writer.writerow(row)
+    return path
+
+
+OUTREACH_COLUMNS = ["status", "email", "first_name", "last_name", "role_title",
+                    "company_name", "score", "note", "added_at", "updated_at", "run_id"]
+
+
+def export_outreach_csv() -> Path:
+    EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+    path = EXPORT_DIR / f"suivi-{datetime.now().strftime('%Y%m%d-%H%M%S')}.csv"
+    with path.open("w", newline="", encoding="utf-8-sig") as handle:
+        writer = csv.DictWriter(handle, fieldnames=OUTREACH_COLUMNS, extrasaction="ignore",
+                                delimiter=";")
+        writer.writeheader()
+        for row in list_outreach():
             writer.writerow(row)
     return path

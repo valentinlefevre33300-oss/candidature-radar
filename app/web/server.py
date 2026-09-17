@@ -11,7 +11,7 @@ import json
 import logging
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -130,10 +130,8 @@ async def _execute(job: Job, query: SearchQuery, payload: SearchPayload) -> None
         for company in companies:
             db.save_company(company)
 
-        # On ecarte les adresses deja demarchees pour ne pas ecrire deux fois.
-        contacted = db.already_contacted()
-        contacts = [c for c in contacts if c.email not in contacted]
-
+        # Les adresses deja suivies restent dans les resultats : l'interface les
+        # annote avec leur statut plutot que de les faire disparaitre.
         db.save_contacts(job.run_id, contacts)
         db.finish_run(job.run_id, len(companies), len(contacts))
         await job.queue.put({"event": "termine", "total_contacts": len(contacts),
@@ -171,6 +169,14 @@ async def stream(run_id: int) -> StreamingResponse:
                                       "X-Accel-Buffering": "no"})
 
 
+@app.get("/api/runs/{run_id}")
+async def run_detail(run_id: int) -> dict:
+    run = db.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Recherche inconnue")
+    return run
+
+
 @app.get("/api/runs/{run_id}/contacts")
 async def contacts(run_id: int) -> list[dict]:
     return db.run_contacts(run_id)
@@ -185,12 +191,67 @@ async def export(run_id: int) -> FileResponse:
     return FileResponse(path, filename=path.name, media_type="text/csv")
 
 
-class ContactedPayload(BaseModel):
+# ---------------------------------------------------------------- suivi ---
+
+class OutreachCreate(BaseModel):
     email: str
+    status: str = "a_contacter"
     note: str = ""
+    company_name: str | None = None
+    first_name: str | None = None
+    last_name: str | None = None
+    role_title: str | None = None
+    category: str | None = None
+    score: float | None = None
+    run_id: int | None = None
 
 
-@app.post("/api/contacted")
-async def mark_contacted(payload: ContactedPayload) -> dict:
-    db.mark_contacted(payload.email.strip().lower(), payload.note.strip())
+class OutreachPatch(BaseModel):
+    status: str | None = None
+    note: str | None = None
+
+
+def _check_status(value: str | None) -> None:
+    if value is not None and value not in db.OUTREACH_STATUSES:
+        raise HTTPException(status_code=400,
+                            detail=f"Statut inconnu : {value}. Attendu : "
+                                   + ", ".join(db.OUTREACH_STATUSES))
+
+
+@app.get("/api/outreach")
+async def outreach_list(status: str | None = None) -> list[dict]:
+    _check_status(status)
+    return db.list_outreach(status)
+
+
+@app.post("/api/outreach")
+async def outreach_add(payload: OutreachCreate) -> dict:
+    _check_status(payload.status)
+    data = payload.model_dump()
+    email = data.pop("email").strip().lower()
+    status = data.pop("status")
+    note = data.pop("note")
+    db.upsert_outreach(email, status, note, **data)
+    return {"ok": True, "email": email, "status": status}
+
+
+@app.patch("/api/outreach/{email}")
+async def outreach_patch(email: str, payload: OutreachPatch) -> dict:
+    _check_status(payload.status)
+    if not db.update_outreach(email.strip().lower(), payload.status, payload.note):
+        raise HTTPException(status_code=404, detail="Contact absent du suivi")
     return {"ok": True}
+
+
+@app.delete("/api/outreach/{email}", status_code=204, response_class=Response)
+async def outreach_delete(email: str) -> Response:
+    db.delete_outreach(email.strip().lower())
+    return Response(status_code=204)
+
+
+@app.get("/api/outreach/export")
+async def outreach_export() -> FileResponse:
+    if not db.list_outreach():
+        raise HTTPException(status_code=404, detail="Le suivi est vide")
+    path = db.export_outreach_csv()
+    return FileResponse(path, filename=path.name, media_type="text/csv")
