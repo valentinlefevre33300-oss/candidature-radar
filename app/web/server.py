@@ -7,8 +7,10 @@ diffusent leur avancement via Server-Sent Events.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
+import secrets
 from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, Response, UploadFile
@@ -20,7 +22,8 @@ import httpx
 
 from .. import campaigns as engine
 from .. import compose, db, geo, gmail
-from ..config import BASE_URL, DAILY_CAP, DRY_RUN, MONTHLY_CAP, PUBLIC_URL, ROOT
+from ..config import (APP_PASSWORD, APP_USER, BASE_URL, DAILY_CAP, DRY_RUN, MONTHLY_CAP,
+                      PUBLIC_URL, ROOT)
 from ..models import SearchQuery
 from ..naf import catalogue, codes_for
 from ..pipeline import run_search
@@ -30,6 +33,41 @@ log = logging.getLogger(__name__)
 STATIC = Path(__file__).parent / "static"
 
 app = FastAPI(title="Candidature Radar", docs_url="/api/docs")
+
+
+_LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost"}
+
+
+@app.middleware("http")
+async def _guard(request, call_next):
+    """Mot de passe devant l'interface, hors pixel d'ouverture.
+
+    L'outil envoie des mails depuis un Gmail : dès qu'il écoute sur le réseau,
+    il faut un mot de passe. Sans mot de passe défini, on n'accepte que le poste
+    local — jamais d'exposition par oubli.
+    """
+    path = request.url.path
+    if path.startswith("/t/"):
+        return await call_next(request)   # le pixel doit rester ouvert aux messageries
+    client = (request.client.host if request.client else "") or ""
+    if not APP_PASSWORD:
+        if client in _LOCAL_HOSTS:
+            return await call_next(request)
+        return Response("Accès refusé : définis CR_APP_PASSWORD dans .env pour ouvrir "
+                        "l'interface au réseau.", status_code=403, media_type="text/plain; charset=utf-8")
+    header = request.headers.get("authorization", "")
+    ok = False
+    if header.lower().startswith("basic "):
+        try:
+            user, _, password = base64.b64decode(header[6:]).decode("utf-8", "replace").partition(":")
+            ok = secrets.compare_digest(password, APP_PASSWORD) and \
+                secrets.compare_digest(user, APP_USER)
+        except (ValueError, UnicodeDecodeError):
+            ok = False
+    if not ok:
+        return Response("Authentification requise", status_code=401,
+                        headers={"WWW-Authenticate": 'Basic realm="Candidature Radar", charset="UTF-8"'})
+    return await call_next(request)
 
 
 @app.middleware("http")

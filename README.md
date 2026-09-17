@@ -183,6 +183,7 @@ Pour les campagnes :
 | `CR_PUBLIC_URL` | URL publique de l'application, pour le pixel d'ouverture. Vide en local. |
 | `CR_MONTHLY_CAP` / `CR_DAILY_CAP` / `CR_SEND_INTERVAL` | Plafonds et espacement des envois. |
 | `CR_DRY_RUN` | `1` force la simulation quoi qu'il arrive (l'interrupteur des réglages fait la même chose sans redémarrer). |
+| `CR_APP_PASSWORD` / `CR_APP_USER` | Mot de passe demandé par le navigateur (HTTP Basic) pour ouvrir l'interface depuis un autre appareil — téléphone sur le même Wi-Fi (`http://<IP du PC>:8010`) ou déploiement. **Tant qu'il est vide, seul le PC lui-même est accepté**, même si le serveur écoute sur le réseau : l'outil envoie des mails, il ne doit jamais être ouvert par oubli. Le pixel d'ouverture reste accessible sans mot de passe. |
 
 Le jeton Gmail est stocké dans `data/gmail_token.json` (ignoré par git). Portées
 demandées : `gmail.send` et `gmail.readonly` — envoyer, et lire les réponses reçues

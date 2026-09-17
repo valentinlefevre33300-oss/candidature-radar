@@ -57,3 +57,8 @@ CLAUDE_MODEL = os.getenv("CR_CLAUDE_MODEL", "claude-opus-5")
 # Mode simulation : la chaîne d'envoi tourne entièrement (rédaction, quotas,
 # journal) mais aucun mail ne part. Pour tester une campagne à blanc.
 DRY_RUN = os.getenv("CR_DRY_RUN", "0") == "1"
+
+# Mot de passe devant l'interface (HTTP Basic). Vide : seul le poste local est
+# accepté — indispensable des qu'on ecoute sur le reseau, l'outil envoie des mails.
+APP_PASSWORD = os.getenv("CR_APP_PASSWORD", "")
+APP_USER = os.getenv("CR_APP_USER", "valentin")
