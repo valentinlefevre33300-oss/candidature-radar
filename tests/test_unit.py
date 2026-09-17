@@ -16,7 +16,7 @@ from app.extract.emails import EMAIL_RE, OBFUSCATED_RE, decode_cloudflare, extra
 from app.extract.people import (classify_mailbox, find_role_near, guess_name_from_local,
                                 infer_pattern, render)
 from app.models import Company, Contact, Director
-from app.pipeline import _build_contact, _infer_director_emails
+from app.pipeline import _build_contact, _infer_director_emails, _address_pattern as _ap
 from app.resolve.domain import candidate_domains, company_tokens, name_matches_page
 from app.score import dedupe_and_rank, matches_director, score_contact
 from app.sources.sirene import _parse_directors, headcount_codes
@@ -163,12 +163,24 @@ rh = score_contact(make("aude.balleydier@acme.fr", category="rh", is_nominative=
 boss = score_contact(make("marie.dupont@acme.fr", category="direction", is_nominative=True,
                           inferred=True, matched_director=True, mx_ok=True,
                           source_url="(deduit)"), firm, "developpeur")
+lead = score_contact(make("paul.martin@acme.fr", category="metier", is_nominative=True, is_manager=True,
+                          role_title="Responsable technique", mx_ok=True), firm, "developpeur python")
+peer = score_contact(make("lea.roux@acme.fr", category="metier", is_nominative=True,
+                          role_title="Developpeuse backend", mx_ok=True), firm, "developpeur python")
+guess = score_contact(make("yann.petit@acme.fr", category="metier", is_nominative=True, is_manager=True,
+                           role_title="CTO", inferred=True, pattern_used="{first}.{last}?", mx_ok=True,
+                           source_url="https://acme.fr/equipe"), firm, "developpeur python")
 generic = score_contact(make("contact@acme.fr", category="generique", mx_ok=True), firm, "developpeur")
 vendor = score_contact(make("info@studiometa.fr", category="generique", mx_ok=True), firm, "developpeur")
 dead = score_contact(make("rh@acme.fr", category="rh", mx_ok=False), firm, "developpeur")
 
-check(rh.score > boss.score, f"un contact RH observe ({rh.score}) passe devant un dirigeant deduit ({boss.score})")
-check(boss.score > generic.score, f"un dirigeant deduit ({boss.score}) passe devant une boite generique ({generic.score})")
+check(lead.score > peer.score, f"le responsable du service ({lead.score}) passe devant un pair ({peer.score})")
+check(peer.score > boss.score > rh.score,
+      f"pair ({peer.score}) > dirigeant deduit de petite structure ({boss.score}) > RH ({rh.score})")
+check(rh.score > generic.score, f"les RH ({rh.score}) restent devant une boite generique ({generic.score})")
+check(guess.score < lead.score and any("suppos" in r for r in guess.reasons),
+      f"une adresse au motif suppose ({guess.score}) est penalisee et explique")
+check(any("recrute" in r for r in lead.reasons), "la raison dit que cette personne recrute pour le poste")
 check(vendor.score < generic.score, f"un domaine tiers ({vendor.score}) est depriorise")
 check(any("prestataire" in r for r in vendor.reasons), "la raison du declassement est explicite")
 check(dead.score < generic.score, f"une adresse sans MX ({dead.score}) est depriorisee")
@@ -177,9 +189,71 @@ check(all(c.reasons for c in (boss, vendor, dead)), "chaque declassement est jus
 check(matches_director(make("marie.dupont@acme.fr"), firm), "l'adresse d'un dirigeant est reconnue")
 check(not matches_director(make("contact@acme.fr"), firm), "une boite generique n'est pas un dirigeant")
 
-ranked = dedupe_and_rank([generic, rh, boss, vendor, rh])
-check(len(ranked) == 4, f"les doublons sont fusionnes (obtenu {len(ranked)})")
-check(ranked[0].email == rh.email, "le meilleur contact arrive en tete")
+ranked = dedupe_and_rank([generic, rh, boss, vendor, rh, lead])
+check(len(ranked) == 5, f"les doublons sont fusionnes (obtenu {len(ranked)})")
+check(ranked[0].email == lead.email, "le meilleur contact arrive en tete")
+
+# --------------------------------------------------------------------------
+print("\n== Domaines metier ==")
+from app.domains import classify_role, job_domain
+check(job_domain("développeur python") == "tech", "« developpeur python » -> tech")
+check(job_domain("Product Owner") == "produit", "« Product Owner » -> produit")
+check(job_domain("chargée de communication") == "marketing", "« chargee de communication » -> marketing")
+check(job_domain("boulanger") is None, "un metier hors catalogue -> None (pas de faux domaine)")
+check(classify_role("Directeur technique", "tech") == ("metier", True), "directeur technique = responsable du metier")
+check(classify_role("Développeuse backend", "tech") == ("metier", False), "developpeuse backend = pair")
+check(classify_role("Responsable RH", "tech") == ("rh", True), "responsable RH reste RH pour un developpeur")
+check(classify_role("Président", "tech") == ("direction", True), "president = direction")
+check(classify_role("Community Manager", "tech") == (None, False), "« community manager » n'est pas un responsable tech")
+check(classify_role("Comptable", "tech")[0] is None, "un comptable n'est pas un interlocuteur pour un developpeur")
+
+# --------------------------------------------------------------------------
+print("\n== Page equipe : noms et fonctions ==")
+from app.extract.team import extract_people
+TEAM = """<main><section class="team"><h2>Notre équipe</h2>
+ <div class="card"><img src="a.jpg"><h3>Jean-Claude Labrune</h3><p>Directeur technique</p></div>
+ <div class="card"><img src="b.jpg"><h3>Aude Balleydier</h3><p>Responsable ressources humaines</p></div>
+ <div class="card"><h3>Sophie Leroy</h3><p>Développeuse backend</p><a href="#">LinkedIn</a></div>
+ <div class="card"><h3>Nos valeurs</h3><p>Innovation et qualité</p></div>
+ <p>Marc Dubois — Directeur commercial</p>
+</section><footer>Contact · Mentions légales · Directeur de la publication : ACME SAS</footer></main>"""
+people = extract_people(BeautifulSoup(TEAM, "lxml"), "ACME SAS")
+names = {(f, l) for f, l, _ in people}
+check(("Jean-Claude", "Labrune") in names, "carte nom + fonction (prenom compose)")
+check(("Aude", "Balleydier") in names, "carte nom + fonction RH")
+check(("Sophie", "Leroy") in names, "carte avec lien LinkedIn")
+check(("Marc", "Dubois") in names, "nom et fonction sur une seule ligne")
+check(not any(f in ("Nos", "Notre", "ACME") for f, _, _ in people), "« Nos valeurs » et la raison sociale ne sont pas des personnes")
+roles = {(f, l): r for f, l, r in people}
+check("technique" in roles.get(("Jean-Claude", "Labrune"), "").lower(), "la fonction est rattachee a la bonne personne")
+
+# --------------------------------------------------------------------------
+print("\n== Personnes de la page equipe -> adresses ==")
+from app.pipeline import _address_pattern, _infer_people_emails
+firm2 = Company(siren="9", name="ACME", domain="acme.fr", headcount_code="12")
+obs = [make("sophie.leroy@acme.fr", company_siren="9", company_name="ACME")]
+obs[0].first_name, obs[0].last_name = "Sophie", "Leroy"
+pattern, guessed = _address_pattern(firm2, obs, [])
+check(pattern == "{first}.{last}" and not guessed, "motif deduit d'une adresse observee")
+TEAM_PEOPLE = [("Jean-Claude", "Labrune", "Directeur technique", "https://acme.fr/equipe"),
+               ("Aude", "Balleydier", "Responsable RH", "https://acme.fr/equipe"),
+               ("Marc", "Dubois", "Comptable", "https://acme.fr/equipe")]
+made = {c.email: c for c in _infer_people_emails(firm2, obs, TEAM_PEOPLE, "tech", pattern, guessed)}
+check("jeanclaude.labrune@acme.fr" in made, "l'adresse du directeur technique est reconstituee")
+check(made.get("jeanclaude.labrune@acme.fr") and made["jeanclaude.labrune@acme.fr"].category == "metier"
+      and made["jeanclaude.labrune@acme.fr"].is_manager, "classe metier + responsable")
+check("aude.balleydier@acme.fr" in made and made["aude.balleydier@acme.fr"].category == "rh", "la RH est gardee, en RH")
+check("marc.dubois@acme.fr" not in made, "le comptable est ignore pour un poste tech")
+check(all(not c.pattern_used.endswith("?") for c in made.values()), "motif prouve : pas de marque « suppose »")
+p2, g2 = _address_pattern(firm2, [], [])
+check(g2 and p2 == "{first}.{last}", "sans adresse observee : motif prenom.nom suppose")
+made2 = _infer_people_emails(firm2, [], TEAM_PEOPLE[:1], "tech", p2, g2)
+check(bool(made2) and made2[0].pattern_used.endswith("?"), "l'adresse supposee est marquee comme telle")
+big = Company(siren="10", name="BIGCO", domain="bigco.fr", headcount_code="22")
+made3 = _infer_people_emails(big, [], [("Laurent", "Fiard", "Président", "u"),
+                                       ("Audrey", "Coutty", "Directrice technique", "u")], "tech", p2, g2)
+check([c.category for c in made3] == ["metier"],
+      "grande entreprise + motif suppose : la direction est ecartee, le responsable metier garde")
 
 # --------------------------------------------------------------------------
 print("\n== Fonction lue autour de l'adresse ==")
@@ -224,7 +298,10 @@ crowded.directors = [
 ]
 observed = [make("jean.martin@bigco.fr", company_siren="2", company_name="BIGCO")]
 observed[0].first_name, observed[0].last_name = "Jean", "Martin"
-produced = _infer_director_emails(crowded, observed)
+_pat, _guess = _ap(crowded, observed, [])
+produced = _infer_director_emails(crowded, observed, "tech", _pat, _guess)
+check(not _infer_director_emails(crowded, [], "tech", "{first}.{last}", True),
+      "grande entreprise sans motif prouve : on ne devine pas l'adresse des dirigeants")
 check(len(produced) <= 3, f"au plus 3 adresses deduites par entreprise (obtenu {len(produced)})")
 check(all(c.inferred and c.pattern_used for c in produced), "chaque adresse deduite est tracee")
 check(all(c.source_url.startswith("(deduit") for c in produced), "la provenance indique la deduction")

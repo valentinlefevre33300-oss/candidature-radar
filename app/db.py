@@ -76,6 +76,7 @@ CREATE TABLE IF NOT EXISTS contacts (
     inferred      INTEGER,
     pattern_used  TEXT,
     matched_director INTEGER,
+    is_manager    INTEGER,
     mx_ok         INTEGER,
     smtp_ok       INTEGER,
     reasons       TEXT,
@@ -233,11 +234,18 @@ def _upgrade_companies(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE companies ADD COLUMN tagline TEXT")
 
 
+def _upgrade_contacts(conn: sqlite3.Connection) -> None:
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(contacts)")}
+    if "is_manager" not in existing:
+        conn.execute("ALTER TABLE contacts ADD COLUMN is_manager INTEGER DEFAULT 0")
+
+
 def init_db(path: Path | None = None) -> None:
     with connect(path) as conn:
         conn.executescript(SCHEMA)
         _upgrade_outreach(conn)
         _upgrade_companies(conn)
+        _upgrade_contacts(conn)
 
 
 def start_run(job_title: str, sectors: str, department: str | None, params: str) -> int:
@@ -279,6 +287,7 @@ def save_contacts(run_id: int, contacts: list[Contact]) -> None:
         (c.email, run_id, c.company_siren, c.company_name, c.first_name, c.last_name,
          c.role_title, c.category, c.score, c.source_url, int(c.is_nominative),
          int(c.was_obfuscated), int(c.inferred), c.pattern_used, int(c.matched_director),
+         int(c.is_manager),
          None if c.mx_ok is None else int(c.mx_ok),
          None if c.smtp_ok is None else int(c.smtp_ok),
          " | ".join(c.reasons), c.found_at)
@@ -288,8 +297,8 @@ def save_contacts(run_id: int, contacts: list[Contact]) -> None:
         conn.executemany(
             "INSERT INTO contacts (email, run_id, company_siren, company_name, first_name, "
             "last_name, role_title, category, score, source_url, is_nominative, was_obfuscated, "
-            "inferred, pattern_used, matched_director, mx_ok, smtp_ok, reasons, found_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+            "inferred, pattern_used, matched_director, is_manager, mx_ok, smtp_ok, reasons, found_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(email, run_id) DO UPDATE SET score=excluded.score",
             rows,
         )
@@ -401,7 +410,7 @@ def run_contacts(run_id: int) -> list[dict]:
 
 EXPORT_COLUMNS = [
     "score", "email", "category", "first_name", "last_name", "role_title",
-    "company_name", "city", "size", "domain", "mx_ok", "matched_director",
+    "company_name", "city", "size", "domain", "mx_ok", "matched_director", "is_manager",
     "inferred", "pattern_used", "source_url", "reasons", "found_at",
 ]
 

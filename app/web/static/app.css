@@ -196,6 +196,7 @@ details.adv .adv-body { margin-top: 16px; display: grid; gap: 16px; grid-templat
 .score.low { color: var(--muted); font-weight: 600; }
 .catpill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--muted); }
 .catpill i { width: 8px; height: 8px; border-radius: 50%; background: var(--card-hover); }
+.catpill.metier i { background: var(--data-ink); } .catpill.metier { color: var(--data-ink); }
 .catpill.rh i { background: var(--biz-ink); } .catpill.rh { color: var(--biz-ink); }
 .catpill.direction i { background: var(--tech-ink); } .catpill.direction { color: var(--tech-ink); }
 .catpill.nominatif i { background: var(--ux-ink); } .catpill.nominatif { color: var(--ux-ink); }

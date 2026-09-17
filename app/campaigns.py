@@ -29,8 +29,10 @@ from .sources.sirene import count_companies
 log = logging.getLogger(__name__)
 
 MIN_SCORE = 40
-# Ordre de préférence quand une entreprise offre plusieurs contacts.
-CATEGORY_RANK = {"rh": 0, "direction": 1, "nominatif": 2, "generique": 3, "inconnu": 4}
+# Ordre de préférence quand une entreprise offre plusieurs contacts : d'abord la
+# personne du métier visé (le responsable de service avant le pair), puis le
+# dirigeant, puis les RH — qui reçoivent tout le monde — puis les boîtes.
+CATEGORY_RANK = {"metier": 0, "direction": 1, "rh": 2, "nominatif": 3, "generique": 4, "inconnu": 5}
 EXCLUDED_CATEGORIES = {"juridique", "technique", "commercial"}
 SEND_WINDOW = (8, 19)      # heures locales : un mail à 3 h du matin sent le robot
 TICK_SECONDS = 20
@@ -88,7 +90,9 @@ def pick_recipients(run_id: int, *, min_score: float = MIN_SCORE) -> dict:
         if domain and not email.endswith("@" + domain.lower().removeprefix("www.")):
             excluded["domaine_tiers"] += 1   # agence web, hébergeur cités en mentions légales
             continue
-        rank = (CATEGORY_RANK.get(contact.get("category"), 5), -(contact.get("score") or 0),
+        guessed = bool((contact.get("pattern_used") or "").endswith("?"))
+        rank = (CATEGORY_RANK.get(contact.get("category"), 6), int(guessed),
+                0 if contact.get("is_manager") else 1, -(contact.get("score") or 0),
                 int(bool(contact.get("inferred"))))
         current = best.get(key)
         if current is None or rank < current["_rank"]:
@@ -101,6 +105,8 @@ def pick_recipients(run_id: int, *, min_score: float = MIN_SCORE) -> dict:
                 "category": contact.get("category"),
                 "score": contact.get("score"),
                 "inferred": bool(contact.get("inferred")),
+                "guessed": guessed,
+                "is_manager": bool(contact.get("is_manager")),
                 "company_siren": contact.get("company_siren"),
                 "company_name": contact.get("company_name"),
                 "company_domain": domain,

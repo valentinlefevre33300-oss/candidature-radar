@@ -62,6 +62,7 @@ class Contact:
                                        # jamais vue telle quelle sur le site
     pattern_used: str | None = None    # motif appliqué, si inferred
     matched_director: bool = False     # correspond à un dirigeant Sirene
+    is_manager: bool = False           # dirige une équipe (responsable, head of, lead…)
     mx_ok: bool | None = None
     smtp_ok: bool | None = None
     score: float = 0.0

@@ -1,6 +1,6 @@
 /* Vues : tableau de bord des campagnes, assistant de création, page de campagne. */
 import { $, $$, esc, api, upload, state, toast, fmtDate, fmtDay, relTime, sectorLabel, monogram, pretty, pageHead,
-         enableTilt, highlightVars, openModal, closeModal, linkedinSearch, queryParam,
+         enableTilt, highlightVars, openModal, closeModal, linkedinSearch, queryParam, contactTags,
          CATEGORY, CAT_FAMILY, APP_STATUS, CAMP_STATUS, HEADCOUNT } from './core.js';
 import { startSearch, parseZone, headcountRange, renderProgress, updateProgress } from './views-search.js';
 
@@ -170,7 +170,7 @@ function drawWizard() {
         ${w.recipients.map(r => { const name = [r.first_name, r.last_name].filter(Boolean).join(' ');
           return `<div class="item"><input type="checkbox" data-e="${esc(r.email)}" ${w.chosen.has(r.email) ? 'checked' : ''} style="accent-color:var(--logo-to);width:16px;height:16px">
             <div class="mono sm ${CAT_FAMILY[r.category] || ''}">${esc(monogram(r.company_name))}</div>
-            <div style="min-width:0"><div class="t" style="font-size:14px">${esc(r.email)}${r.inferred ? '<span class="tag">déduite</span>' : ''}</div>
+            <div style="min-width:0"><div class="t" style="font-size:14px">${esc(r.email)}${contactTags(r)}</div>
               <div class="s">${name ? `<b>${esc(name)}</b>` : ''}${name && r.role_title ? ' — ' : ''}${esc((r.role_title || '').slice(0, 60))}</div></div>
             <div class="meta" style="text-align:left"><b>${esc(pretty(r.company_name))}</b>${esc([r.company_city, r.company_size].filter(Boolean).join(' · '))}</div>
             <span class="catpill ${esc(r.category)}"><i></i>${esc(CATEGORY[r.category] || r.category)}</span></div>`; }).join('')}

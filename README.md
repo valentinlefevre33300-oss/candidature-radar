@@ -29,10 +29,14 @@ mais rarement celle du dirigeant. L'outil fait la jonction :
    équipe, recrutement), pas le site entier.
 4. **Extraire** — `mailto:`, texte brut, obfuscation `nom [at] domaine [dot] fr`,
    et protection Cloudflare `data-cfemail`.
-5. **Déduire** — une seule adresse nominative observée suffit à identifier le motif
-   maison (`prenom.nom@`, `pnom@`…) et à reconstituer celle des dirigeants connus.
-6. **Classer** — un contact RH identifié passe devant un dirigeant, qui passe devant
-   une boîte générique. Chaque note est justifiée en clair.
+5. **Déduire** — les pages Équipe donnent des noms et des fonctions sans adresse ;
+   une seule adresse nominative observée suffit à identifier le motif maison
+   (`prenom.nom@`, `pnom@`…) et à reconstituer celles des dirigeants et des
+   responsables trouvés. Sans aucune adresse observée, `prenom.nom@` est tenté et
+   marqué **motif supposé** — classé derrière, rebond possible.
+6. **Classer** — d'abord **la personne du métier visé** (le responsable du service
+   avant le pair), puis le dirigeant d'une petite structure, puis les RH, puis les
+   boîtes génériques. Chaque note est justifiée en clair.
 7. **Cibler une campagne** — l'assistant compte les entreprises par secteur pour la zone
    (« Conseil 796, Tech 630… »), lance la recherche, puis retient **une personne par
    entreprise**, la mieux placée, en écartant celles déjà contactées et les prestataires.
@@ -94,15 +98,19 @@ python cli.py historique
 | Colonne | Sens |
 |---|---|
 | **Score** | Pertinence pour une candidature. Au-dessus de 80, l'interlocuteur est le bon. |
-| **Catégorie** | `rh` > `direction` > `nominatif` > `generique` > le reste. |
+| **Catégorie** | `metier` (la personne du métier visé — responsable de service d'abord) > `direction` > `rh` > `nominatif` > `generique` > le reste. |
+| `responsable` | Dirige le service qui recrute pour ce poste : l'interlocuteur idéal. |
 | `déduite` | **L'adresse n'a jamais été vue en ligne.** Elle est reconstituée depuis le motif maison. À vérifier avant d'écrire. |
 | `sans MX` | Le domaine ne déclare aucun serveur de messagerie : l'adresse ne peut pas recevoir. |
 | **Raisons** | Pourquoi ce score. Utile pour repérer un classement discutable. |
 
 Deux garde-fous notables, appris en construisant l'outil :
 
-- une adresse **déduite** ne passe jamais devant une adresse **observée** — un contact RH
-  confirmé vaut mieux qu'un PDG supposé ;
+- les RH ne sont **pas** prioritaires : elles reçoivent des centaines de candidatures,
+  alors que le responsable du service est le premier à vouloir un nouveau membre dans
+  son équipe — l'outil cherche à parler directement aux gens concernés ;
+- une adresse **déduite** est pénalisée par rapport à une adresse **observée**, et une
+  adresse au **motif supposé** l'est encore plus ;
 - une boîte fonctionnelle (`contact@`, `info@`) n'est **pas** promue en RH sous prétexte
   que le mot « recrutement » figure dans le menu du site.
 

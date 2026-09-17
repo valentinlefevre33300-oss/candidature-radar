@@ -1,13 +1,14 @@
 """Classement des contacts par pertinence pour une candidature spontanée.
 
 Le but n'est pas de ramasser le plus d'adresses possible, mais de faire remonter
-les quelques-unes qui valent un mail. L'ordre de préférence retenu :
+les quelques-unes qui valent un mail. L'ordre de préférence retenu — parler aux
+gens concernés, pas aux boîtes qui reçoivent tout le monde :
 
-  1. une personne identifiée aux ressources humaines ;
-  2. un dirigeant, surtout dans une petite structure où il lit ses mails ;
-  3. une personne identifiée dont le métier recoupe le poste visé ;
-  4. la boîte de recrutement générique ;
-  5. le contact général, en dernier recours.
+  1. la personne du métier visé, et d'abord celle qui dirige ce service : c'est
+     elle qui veut un nouveau membre dans son équipe ;
+  2. le dirigeant d'une petite structure, qui est de fait le manager ;
+  3. les ressources humaines, qui reçoivent des centaines de candidatures ;
+  4. la boîte de recrutement ou le contact générique, en dernier recours.
 
 Tout ce qui est manifestement hors sujet (facturation, support, RGPD) est
 conservé mais relégué : on préfère expliquer pourquoi un contact est mal classé
@@ -15,21 +16,19 @@ plutôt que de le faire disparaître silencieusement.
 """
 from __future__ import annotations
 
-import re
-
 from .extract.people import (
     SERVICE_PROVIDER_DOMAINS,
     classify_mailbox,
     normalize,
-    strip_accents,
 )
 from .models import Company, Contact
 
-# Note de départ selon la nature de la boîte mail.
+# Note de départ selon la nature de l'interlocuteur.
 BASE_SCORES: dict[str, float] = {
-    "rh": 100.0,
-    "direction": 80.0,
-    "nominatif": 65.0,
+    "metier": 100.0,
+    "direction": 85.0,
+    "rh": 75.0,
+    "nominatif": 60.0,
     "generique": 40.0,
     "commercial": 18.0,
     "technique": 12.0,
@@ -40,13 +39,13 @@ BASE_SCORES: dict[str, float] = {
 # Boîtes aux lettres à ne jamais remonter en tête, même bien notées par ailleurs.
 HARD_DEMOTE = {"juridique", "technique"}
 
+SMALL_COMPANY = {"00", "01", "02", "03", "11", "12"}   # moins de 50 salariés
+LARGE_COMPANY = {"41", "42", "51", "52", "53"}         # 500 et plus
 
-def _title_tokens(job_title: str) -> set[str]:
-    """Mots significatifs du poste visé, pour détecter un métier voisin."""
-    stop = {"de", "du", "des", "en", "la", "le", "les", "un", "une", "et", "a",
-            "au", "aux", "pour", "chez", "senior", "junior", "confirme", "h", "f"}
-    words = re.split(r"[^a-z0-9+#]+", strip_accents(job_title).lower())
-    return {w for w in words if len(w) > 2 and w not in stop}
+
+def is_guessed(contact: Contact) -> bool:
+    """Adresse construite sans qu'aucune adresse nominative n'ait été observée."""
+    return bool(contact.pattern_used and contact.pattern_used.endswith("?"))
 
 
 def score_contact(contact: Contact, company: Company, job_title: str) -> Contact:
@@ -56,9 +55,9 @@ def score_contact(contact: Contact, company: Company, job_title: str) -> Contact
 
     # La fonction lue dans la page prime sur la seule lecture de l'adresse :
     # « marie.dupont@ » ne dit rien, « Marie Dupont, DRH » dit tout.
-    if contact.role_title and contact.category in ("rh", "direction", "technique"):
+    if contact.role_title and contact.category in ("metier", "rh", "direction"):
         category = contact.category
-        reasons.append(f"fonction repérée dans la page : {contact.role_title[:60]}")
+        reasons.append(f"fonction repérée : {contact.role_title[:60]}")
     elif contact.category in BASE_SCORES and contact.category != "inconnu":
         category = contact.category
     else:
@@ -67,7 +66,14 @@ def score_contact(contact: Contact, company: Company, job_title: str) -> Contact
     score = BASE_SCORES[category]
     contact.category = category
 
-    # -- pertinence de l'adresse elle-même ---------------------------------
+    # -- pertinence de l'interlocuteur --------------------------------------
+
+    if category == "metier":
+        if contact.is_manager:
+            score += 15
+            reasons.append("dirige le service qui recrute pour ce poste")
+        else:
+            reasons.append("exerce le métier visé : un pair, qui sait ce que cherche l'équipe")
 
     if contact.is_nominative:
         score += 15
@@ -77,14 +83,17 @@ def score_contact(contact: Contact, company: Company, job_title: str) -> Contact
         score += 25
         reasons.append("correspond à un dirigeant déclaré au registre")
 
-    # Un métier proche du poste visé = interlocuteur qui comprendra le profil.
-    wanted = _title_tokens(job_title)
-    if wanted and contact.role_title:
-        role_words = _title_tokens(contact.role_title)
-        overlap = wanted & role_words
-        if overlap:
-            score += 20
-            reasons.append(f"métier proche du poste visé ({', '.join(sorted(overlap))})")
+    # Dans une structure de moins de 50 personnes, le dirigeant est le manager
+    # et lit ses mails lui-même ; au-delà, la candidature finit dans un filtre.
+    if category == "direction" and company.headcount_code in SMALL_COMPANY:
+        score += 18
+        reasons.append("petite structure : le dirigeant recrute lui-même")
+    elif category == "direction" and company.headcount_code in LARGE_COMPANY:
+        score -= 20
+        reasons.append("grande entreprise : écrire au dirigeant a peu de chances d'aboutir")
+
+    if category == "rh":
+        reasons.append("les RH reçoivent beaucoup de candidatures : utile, mais pas prioritaire")
 
     # -- pénalités ---------------------------------------------------------
 
@@ -107,13 +116,13 @@ def score_contact(contact: Contact, company: Company, job_title: str) -> Contact
         reasons.append("adresse reconstituée depuis une forme masquée — à vérifier")
 
     if contact.inferred:
-        # Une adresse déduite reste une hypothèse : elle ne doit jamais passer
-        # devant une adresse réellement observée sur le site, même moins bien
-        # placée hiérarchiquement. Un contact RH confirmé vaut mieux qu'un PDG
-        # supposé. La pénalité doit donc compenser les bonus cumulés d'un
-        # dirigeant (nominatif + dirigeant reconnu + petite structure).
+        # Une adresse déduite reste une hypothèse : elle ne doit pas passer
+        # devant une adresse observée à interlocuteur équivalent.
         score -= 30
         reasons.append("adresse déduite du motif maison, jamais vue en ligne")
+        if is_guessed(contact):
+            score -= 20
+            reasons.append("motif supposé (aucune adresse nominative observée) : rebond possible")
 
     if contact.mx_ok is True:
         score += 5
@@ -124,20 +133,9 @@ def score_contact(contact: Contact, company: Company, job_title: str) -> Contact
     if category in HARD_DEMOTE:
         reasons.append("boîte fonctionnelle sans rapport avec le recrutement")
 
-    # -- bonus contextuels -------------------------------------------------
-
-    # Dans une structure de moins de 50 personnes, le dirigeant lit ses mails
-    # lui-même ; au-delà, la candidature finit dans un filtre.
-    if category == "direction" and company.headcount_code in {"00", "01", "02", "03", "11", "12"}:
-        score += 18
-        reasons.append("petite structure : le dirigeant lit probablement ses mails")
-    elif category == "direction" and company.headcount_code in {"41", "42", "51", "52", "53"}:
-        score -= 20
-        reasons.append("grande entreprise : écrire au dirigeant a peu de chances d'aboutir")
-
     # Une adresse qui ne peut pas recevoir de courrier ne vaut rien, quelle que
-    # soit la qualite de son titulaire : un plafond dur vaut mieux qu'une penalite
-    # que le score d'un profil RH finirait par absorber.
+    # soit la qualité de son titulaire : un plafond dur vaut mieux qu'une pénalité
+    # que le score d'un bon profil finirait par absorber.
     if contact.mx_ok is False:
         score = min(score, 10.0)
         reasons.append("le domaine n'accepte pas d'email (aucun enregistrement MX)")

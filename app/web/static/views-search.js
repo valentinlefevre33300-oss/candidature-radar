@@ -1,5 +1,5 @@
 /* Vues : Recherche, Résultats d'une recherche, Suivi. */
-import { $, $$, esc, api, state, toast, fmtDate, sectorLabel, monogram, pageHead, enableTilt,
+import { $, $$, esc, api, state, toast, fmtDate, sectorLabel, monogram, pageHead, enableTilt, contactTags,
          STATUS, CATEGORY, CAT_FAMILY, SECTOR_FAMILY, FAMILY_INK, HEADCOUNT } from './core.js';
 
 /* ======================= recherche ======================= */
@@ -232,7 +232,7 @@ export async function renderRun(id) {
                  right: `<a class="btn btn-white" href="/api/runs/${id}/export">Exporter CSV</a><a class="btn btn-accent" href="#/campagnes/nouvelle?run=${id}">Créer une campagne</a>` })}
     <div class="toolbar">
       <div class="pills on-paper" id="catSeg">
-        ${[['all', 'Tous'], ['rh', 'RH'], ['direction', 'Direction'], ['nominatif', 'Nominatifs'], ['generique', 'Génériques']]
+        ${[['all', 'Tous'], ['metier', 'Métier'], ['direction', 'Direction'], ['rh', 'RH'], ['nominatif', 'Nominatifs'], ['generique', 'Génériques']]
           .map(([k, l]) => `<button class="pill ${r.filter === k ? 'on' : ''}" data-k="${k}">${k !== 'all' && CAT_FAMILY[k] ? `<i style="background:${r.filter === k ? '#fff' : FAMILY_INK[CAT_FAMILY[k]]}"></i>` : ''}${l}</button>`).join('')}
       </div>
       <label class="check"><input type="checkbox" id="hideLow" ${r.hideLow ? 'checked' : ''}> Masquer les peu pertinents</label>
@@ -271,10 +271,7 @@ function drawRows(all) {
   el.innerHTML = visible.map(c => {
     const tier = c.score >= 80 ? '' : c.score >= 50 ? 'mid' : 'low';
     const name = [c.first_name, c.last_name].filter(Boolean).join(' ');
-    const flags = [
-      c.inferred ? '<span class="tag" title="Reconstituée depuis le motif maison, jamais vue en ligne">déduite</span>' : '',
-      c.mx_ok === 0 ? '<span class="tag danger" title="Aucun serveur de messagerie déclaré">sans MX</span>' : '',
-    ].join('');
+    const flags = contactTags(c);
     const st = c.outreach_status;
     const act = st
       ? `<select class="status ${st}" data-email="${esc(c.email)}">${Object.entries(STATUS).map(([k, l]) => `<option value="${k}" ${k === st ? 'selected' : ''}>${l}</option>`).join('')}</select>`

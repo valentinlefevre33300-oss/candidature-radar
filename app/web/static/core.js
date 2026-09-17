@@ -16,10 +16,17 @@ export async function upload(url, formData) {
 }
 
 export const STATUS = { a_contacter: 'À contacter', contacte: 'Contacté', relance: 'Relancé', repondu: 'A répondu', ecarte: 'Écarté' };
-export const CATEGORY = { rh: 'RH', direction: 'Direction', nominatif: 'Nominatif', generique: 'Générique', technique: 'Technique', juridique: 'Juridique', commercial: 'Commercial', inconnu: 'Inconnu' };
+export const CATEGORY = { metier: 'Métier', rh: 'RH', direction: 'Direction', nominatif: 'Nominatif', generique: 'Générique', technique: 'Technique', juridique: 'Juridique', commercial: 'Commercial', inconnu: 'Inconnu' };
+export const contactTags = (c) => [
+  c.is_manager && c.category === 'metier' ? '<span class="tag info" title="Dirige le service qui recrute pour ce poste">responsable</span>' : '',
+  c.inferred ? (c.guessed || (c.pattern_used || '').endsWith('?')
+    ? '<span class="tag danger" title="Aucune adresse nominative observée : motif prenom.nom supposé, rebond possible">motif supposé</span>'
+    : '<span class="tag" title="Reconstituée depuis le motif maison, jamais vue en ligne">déduite</span>') : '',
+  c.mx_ok === 0 ? '<span class="tag danger" title="Aucun serveur de messagerie déclaré">sans MX</span>' : '',
+].join('');
 export const APP_STATUS = { programme: 'Programmé', envoye: 'Envoyé', ouvert: 'Ouvert', repondu: 'A répondu', echec: 'Échec', annule: 'Annulé' };
 export const CAMP_STATUS = { brouillon: 'Brouillon', active: 'Active', en_pause: 'En pause', terminee: 'Terminée' };
-export const CAT_FAMILY = { rh: 'biz', direction: 'tech', nominatif: 'ux' };
+export const CAT_FAMILY = { metier: 'data', rh: 'biz', direction: 'tech', nominatif: 'ux' };
 export const SECTOR_FAMILY = {
   tech: 'tech', data_ia: 'tech', ingenierie: 'tech', industrie: 'tech', energie: 'tech', btp: 'tech',
   conseil: 'biz', finance: 'biz', comptabilite: 'biz', rh: 'biz', commerce: 'biz', logistique: 'biz',

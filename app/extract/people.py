@@ -27,12 +27,9 @@ ROLE_KEYWORDS: dict[str, tuple[str, ...]] = {
         "cofounder", "ceo", "coo", "dg", "pdg", "managing director", "associe",
         "associee", "partner", "chief executive", "dirigeant",
     ),
-    "technique": (
-        "cto", "chief technology", "directeur technique", "directrice technique",
-        "vp engineering", "head of engineering", "responsable technique",
-        "lead developer", "tech lead", "engineering manager", "architecte",
-    ),
 }
+# Les fonctions techniques (CTO, lead dev…) ne sont plus une catégorie à part :
+# elles relèvent du domaine métier, voir `app/domains.py`.
 
 # Boîtes fonctionnelles repérables au seul préfixe de l'adresse.
 MAILBOX_CATEGORY: dict[str, tuple[str, ...]] = {
@@ -107,8 +104,22 @@ def guess_name_from_local(local: str) -> tuple[str | None, str | None]:
     return None, None
 
 
-def find_role_near(text: str, email: str) -> tuple[str | None, str | None]:
-    """Cherche une fonction citée autour de l'adresse. Renvoie (catégorie, extrait)."""
+def _excerpt(joined: str, match: re.Match[str]) -> str:
+    before = joined[:match.start()].split()[-4:]
+    after = joined[match.end():].split()[:3]
+    return " ".join(before + [match.group(0)] + after).strip(" .,;:-")[:90]
+
+
+def find_role_near(text: str, email: str, domain: str | None = None,
+                   ) -> tuple[str | None, str | None]:
+    """Cherche une fonction citée autour de l'adresse. Renvoie (catégorie, extrait).
+
+    Si le domaine du poste visé est connu, une fonction de ce métier
+    (« responsable technique » pour un développeur) prime sur tout le reste :
+    c'est l'interlocuteur qu'on cherche vraiment.
+    """
+    from ..domains import _HEAD_RE, _ROLE_RE  # import tardif : évite un cycle
+
     lowered = strip_accents(text.lower())
     target = strip_accents(email.lower())
     position = lowered.find(target)
@@ -121,17 +132,19 @@ def find_role_near(text: str, email: str) -> tuple[str | None, str | None]:
     window = window.replace(target, " ")
     window = _DIGIT_TOKEN.sub(" ", window)
     joined = " ".join(re.sub(r"[|•·]+", " ", window).split())
+
+    if domain:
+        match = _HEAD_RE[domain].search(joined) or _ROLE_RE[domain].search(joined)
+        if match:
+            return "metier", _excerpt(joined, match)
+
     for category, keywords in ROLE_KEYWORDS.items():
         for keyword in keywords:
             # Frontières de mots obligatoires : « coo » matchait « coordonnées »
             # et faisait passer n'importe quelle boîte pour une direction.
             match = re.search(rf"(?<![a-z0-9]){re.escape(keyword)}(?![a-z0-9])", joined)
-            if not match:
-                continue
-            before = joined[:match.start()].split()[-4:]
-            after = joined[match.end():].split()[:3]
-            excerpt = " ".join(before + [keyword] + after).strip(" .,;:-")
-            return category, excerpt[:90]
+            if match:
+                return category, _excerpt(joined, match)
     return None, None
 
 
