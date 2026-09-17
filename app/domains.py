@@ -193,12 +193,20 @@ _STOPWORDS = {"de", "du", "des", "en", "la", "le", "les", "un", "une", "et", "a"
               "freelance", "temps", "plein", "partiel"}
 
 
-def _compile(terms: list[str]) -> re.Pattern[str]:
-    escaped = sorted((re.escape(_norm(t)) for t in terms), key=len, reverse=True)
+# Sigles de deux lettres tolérés dans une FONCTION lue sur une page : « RH » et
+# « HR » sont sans ambiguïté. Les autres (« po », « pm », « it », « si », « ux »…)
+# valent dans un intitulé de poste saisi par l'utilisateur, pas dans du texte
+# libre : « Lech Po(znań) » sur un site de paris devenait un product owner.
+_SHORT_OK = {"rh", "hr"}
+
+
+def _compile(terms: list[str], *, allow_short: bool = False) -> re.Pattern[str]:
+    kept = [t for t in terms if allow_short or len(_norm(t)) >= 3 or _norm(t) in _SHORT_OK]
+    escaped = sorted((re.escape(_norm(t)) for t in kept), key=len, reverse=True)
     return re.compile(r"(?<![a-z0-9])(?:" + "|".join(escaped) + r")(?![a-z0-9])")
 
 
-_JOB_RE = {key: _compile(spec["job"]) for key, spec in DOMAINS.items()}
+_JOB_RE = {key: _compile(spec["job"], allow_short=True) for key, spec in DOMAINS.items()}
 _HEAD_RE = {key: _compile(spec["heads"]) for key, spec in DOMAINS.items()}
 _ROLE_RE = {key: _compile(spec["role"] + spec["job"]) for key, spec in DOMAINS.items()}
 ANY_ROLE_RE = _compile(

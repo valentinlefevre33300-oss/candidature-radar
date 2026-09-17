@@ -226,6 +226,15 @@ check(("Marc", "Dubois") in names, "nom et fonction sur une seule ligne")
 check(not any(f in ("Nos", "Notre", "ACME") for f, _, _ in people), "« Nos valeurs » et la raison sociale ne sont pas des personnes")
 roles = {(f, l): r for f, l, r in people}
 check("technique" in roles.get(("Jean-Claude", "Labrune"), "").lower(), "la fonction est rattachee a la bonne personne")
+# Regression : sur un site de paris, « Crystal Palace / Lech Po » devenait une personne
+# et sa fonction, « po » (product owner) valant comme mot-cle de fonction.
+from app.extract.team import looks_like_role
+check(not looks_like_role("Lech Po"), "« Lech Po » n'est pas une fonction (sigle de deux lettres)")
+check(looks_like_role("Responsable RH") and looks_like_role("DRH"), "les fonctions RH restent reconnues")
+BETS = "<div class='match'><span>Crystal Palace</span><span>Lech Po</span></div><div class='match'><span>Paris SG</span><span>Nice</span></div>"
+check(extract_people(BeautifulSoup(BETS, "lxml"), "BETCLIC") == [], "une liste de matchs ne produit aucune personne")
+check(classify_role("Lech Po", "produit") == (None, False), "« Lech Po » n'est pas un product owner")
+check(job_domain("PO") == "produit", "« PO » reste compris dans un intitule de poste saisi")
 
 # --------------------------------------------------------------------------
 print("\n== Personnes de la page equipe -> adresses ==")
