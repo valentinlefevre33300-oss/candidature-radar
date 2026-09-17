@@ -57,6 +57,8 @@ CREATE TABLE IF NOT EXISTS companies (
     domain      TEXT,
     domain_method TEXT,
     tagline     TEXT,
+    about       TEXT,
+    brief       TEXT,
     seen_at     TEXT NOT NULL
 );
 
@@ -133,6 +135,8 @@ CREATE TABLE IF NOT EXISTS applications (
     company_size     TEXT,
     company_naf      TEXT,
     company_tagline  TEXT,
+    company_about    TEXT,
+    company_brief    TEXT,                           -- fiche « enjeux » rédigée
     subject          TEXT,
     body_text        TEXT,
     body_html        TEXT,
@@ -228,24 +232,21 @@ def _upgrade_outreach(conn: sqlite3.Connection) -> None:
         """)
 
 
-def _upgrade_companies(conn: sqlite3.Connection) -> None:
-    existing = {row["name"] for row in conn.execute("PRAGMA table_info(companies)")}
-    if "tagline" not in existing:
-        conn.execute("ALTER TABLE companies ADD COLUMN tagline TEXT")
-
-
-def _upgrade_contacts(conn: sqlite3.Connection) -> None:
-    existing = {row["name"] for row in conn.execute("PRAGMA table_info(contacts)")}
-    if "is_manager" not in existing:
-        conn.execute("ALTER TABLE contacts ADD COLUMN is_manager INTEGER DEFAULT 0")
+def _add_missing_columns(conn: sqlite3.Connection, table: str, columns: dict[str, str]) -> None:
+    """Complète une table existante : `CREATE TABLE IF NOT EXISTS` n'ajoute rien."""
+    existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+    for column, decl in columns.items():
+        if column not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
 
 def init_db(path: Path | None = None) -> None:
     with connect(path) as conn:
         conn.executescript(SCHEMA)
         _upgrade_outreach(conn)
-        _upgrade_companies(conn)
-        _upgrade_contacts(conn)
+        _add_missing_columns(conn, "companies", {"tagline": "TEXT", "about": "TEXT", "brief": "TEXT"})
+        _add_missing_columns(conn, "contacts", {"is_manager": "INTEGER DEFAULT 0"})
+        _add_missing_columns(conn, "applications", {"company_about": "TEXT", "company_brief": "TEXT"})
 
 
 def start_run(job_title: str, sectors: str, department: str | None, params: str) -> int:
@@ -270,14 +271,25 @@ def save_company(company: Company) -> None:
     with connect() as conn:
         conn.execute(
             "INSERT INTO companies (siren, name, naf, city, postal_code, department, size, "
-            "domain, domain_method, tagline, seen_at) VALUES (?,?,?,?,?,?,?,?,?,?,?) "
+            "domain, domain_method, tagline, about, seen_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(siren) DO UPDATE SET domain=excluded.domain, "
             "domain_method=excluded.domain_method, "
-            "tagline=COALESCE(excluded.tagline, companies.tagline), seen_at=excluded.seen_at",
+            "tagline=COALESCE(excluded.tagline, companies.tagline), "
+            "about=COALESCE(excluded.about, companies.about), seen_at=excluded.seen_at",
             (company.siren, company.name, company.naf, company.city, company.postal_code,
              company.department, company.size, company.domain, company.domain_method,
-             company.tagline, _now()),
+             company.tagline, company.about, _now()),
         )
+
+
+def set_company_brief(siren: str | None, brief: str | None) -> None:
+    """Mémorise la fiche « enjeux » : une par entreprise, réutilisée d'un contact à l'autre."""
+    if not siren or not brief:
+        return
+    with connect() as conn:
+        conn.execute("UPDATE companies SET brief=? WHERE siren=?", (brief, siren))
+        conn.execute("UPDATE applications SET company_brief=? WHERE company_siren=? "
+                     "AND (company_brief IS NULL OR company_brief='')", (brief, siren))
 
 
 def save_contacts(run_id: int, contacts: list[Contact]) -> None:
@@ -400,7 +412,7 @@ def get_run(run_id: int) -> dict | None:
 def run_contacts(run_id: int) -> list[dict]:
     with connect() as conn:
         return [dict(r) for r in conn.execute(
-            "SELECT c.*, co.city, co.size, co.domain, co.naf, co.tagline, "
+            "SELECT c.*, co.city, co.size, co.domain, co.naf, co.tagline, co.about, co.brief, "
             "o.status AS outreach_status, o.note AS outreach_note "
             "FROM contacts c "
             "LEFT JOIN companies co ON co.siren = c.company_siren "
@@ -518,7 +530,8 @@ def delete_campaign(campaign_id: int) -> None:
 APPLICATION_FIELDS = (
     "email", "first_name", "last_name", "role_title", "category", "score",
     "company_siren", "company_name", "company_domain", "company_city", "company_size",
-    "company_naf", "company_tagline", "subject", "body_text", "body_html", "hook",
+    "company_naf", "company_tagline", "company_about", "company_brief",
+    "subject", "body_text", "body_html", "hook",
     "status", "scheduled_at", "token",
 )
 

@@ -22,7 +22,7 @@ from bs4 import BeautifulSoup
 
 from .config import GLOBAL_CONCURRENCY, MAX_PAGES_PER_SITE, SMTP_PROBE
 from .crawl.fetcher import PoliteFetcher, build_client
-from .crawl.spider import crawl_site, page_tagline
+from .crawl.spider import crawl_site, is_about_page, page_main_text, page_tagline
 from .domains import classify_role, is_manager, job_domain
 from .extract.emails import extract_emails
 from .extract.team import extract_people
@@ -256,12 +256,17 @@ async def process_company(fetcher: PoliteFetcher, client: httpx.AsyncClient,
     domain = job_domain(query.job_title)
     observed: list[Contact] = []
     people: list[tuple[str, str, str, str]] = []   # (prenom, nom, fonction, page)
+    about_parts: list[str] = []
     for index, (url, html) in enumerate(pages):
         soup = BeautifulSoup(html, "lxml")
         if index == 0:
-            # La page d'accueil dit en une ligne ce que fait l'entreprise :
-            # c'est la matiere premiere de la redaction personnalisee.
+            # La page d'accueil dit en une ligne ce que fait l'entreprise, et son
+            # texte de fond dit pour qui et comment : matiere premiere de la
+            # fiche « enjeux » et de la redaction personnalisee.
             company.tagline = page_tagline(soup)
+            about_parts.append(page_main_text(soup, 1400))
+        elif is_about_page(url) and len(about_parts) < 3:
+            about_parts.append(page_main_text(soup, 800))
         # Les pages Equipe donnent des noms et des fonctions sans adresse :
         # c'est la que se trouvent les responsables de service.
         for first, last, role in extract_people(soup, company.name):
@@ -275,6 +280,7 @@ async def process_company(fetcher: PoliteFetcher, client: httpx.AsyncClient,
         for email, obfuscated in emails.items():
             observed.append(_build_contact(email, obfuscated, url, page_text, company, domain))
 
+    company.about = " \n".join(part for part in about_parts if part)[:2400] or None
     pattern, guessed = _address_pattern(company, observed, [(p[0], p[1]) for p in people])
     contacts = (observed
                 + _infer_director_emails(company, observed, domain, pattern, guessed)

@@ -153,3 +153,37 @@ def page_tagline(soup: BeautifulSoup, limit: int = 240) -> str | None:
     text = " — ".join(p for p in parts if p)
     text = " ".join(text.split())
     return text[:limit] or None
+
+
+ABOUT_HINTS = ("a-propos", "apropos", "about", "qui-sommes", "notre-histoire", "equipe", "team",
+               "societe", "entreprise", "expertise", "services", "solutions")
+
+
+def page_main_text(soup: BeautifulSoup, limit: int = 1400) -> str:
+    """Le texte de fond d'une page, sans menus ni pieds de page.
+
+    Sert à comprendre l'activité et les enjeux de l'entreprise : ce que le site
+    dit de lui-même, pas le titre seul.
+    """
+    page = BeautifulSoup(str(soup), "lxml")
+    for tag in page(["script", "style", "noscript", "nav", "header", "footer", "form",
+                     "iframe", "svg", "button"]):
+        tag.decompose()
+    root = page.find("main") or page.find("article") or page.body or page
+    chunks: list[str] = []
+    seen: set[str] = set()
+    for text in root.stripped_strings:
+        text = " ".join(text.split())
+        # Les fragments courts sont des libellés de boutons ou de menus.
+        if len(text) < 25 or text in seen:
+            continue
+        seen.add(text)
+        chunks.append(text)
+        if sum(len(c) for c in chunks) >= limit:
+            break
+    return " ".join(chunks)[:limit].strip()
+
+
+def is_about_page(url: str) -> bool:
+    path = urlparse(url).path.lower()
+    return any(hint in path for hint in ABOUT_HINTS)

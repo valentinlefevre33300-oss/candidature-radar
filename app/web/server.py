@@ -434,8 +434,25 @@ async def run_recipients(run_id: int) -> dict:
 async def compose_preview(payload: PreviewPayload) -> dict:
     campaign = {"job_title": payload.job_title, "subject_tpl": payload.subject_tpl,
                 "body_tpl": payload.body_tpl}
-    return await compose.compose(payload.application, campaign, db.all_settings(),
-                                 personalize=payload.personalize)
+    rendered = await compose.compose(payload.application, campaign, db.all_settings(),
+                                     personalize=payload.personalize)
+    db.set_company_brief(payload.application.get("company_siren"), rendered.get("brief"))
+    return rendered
+
+
+class BriefsPayload(BaseModel):
+    job_title: str = Field(min_length=2)
+
+
+@app.post("/api/runs/{run_id}/briefs")
+async def run_briefs(run_id: int, payload: BriefsPayload) -> dict:
+    """Fiche « enjeux » pour chaque entreprise retenue : à lire avant d'écrire."""
+    if db.get_run(run_id) is None:
+        raise HTTPException(status_code=404, detail="Recherche inconnue")
+    try:
+        return await engine.analyse_briefs(run_id, payload.job_title.strip())
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @app.get("/api/campaigns")
@@ -545,7 +562,8 @@ async def application_preview(application_id: int) -> dict:
                                      personalize=bool(campaign.get("personalize")))
     db.update_application(application_id, subject=rendered["subject"],
                           body_text=rendered["body_text"], body_html=rendered["body_html"],
-                          hook=rendered["hook"])
+                          hook=rendered["hook"], company_brief=rendered.get("brief"))
+    db.set_company_brief(row.get("company_siren"), rendered.get("brief"))
     return {**db.get_application(application_id), "engine": rendered["engine"]}
 
 

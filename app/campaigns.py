@@ -114,6 +114,8 @@ def pick_recipients(run_id: int, *, min_score: float = MIN_SCORE) -> dict:
                 "company_size": contact.get("size"),
                 "company_naf": contact.get("naf"),
                 "company_tagline": contact.get("tagline"),
+                "company_about": contact.get("about"),
+                "company_brief": contact.get("brief"),
             }
 
     recipients = sorted(best.values(), key=lambda r: r["_rank"])
@@ -251,7 +253,8 @@ async def send_one(application: dict) -> None:
                                          personalize=bool(campaign.get("personalize")))
         db.update_application(application["id"], subject=rendered["subject"],
                               body_text=rendered["body_text"], body_html=rendered["body_html"],
-                              hook=rendered["hook"])
+                              hook=rendered["hook"], company_brief=rendered.get("brief"))
+        db.set_company_brief(application.get("company_siren"), rendered.get("brief"))
         application.update(rendered)
     elif not application.get("body_html"):
         application["body_html"] = compose.to_html(
@@ -300,6 +303,38 @@ async def send_one(application: dict) -> None:
                           gmail_message_id=message_id, gmail_thread_id=thread_id)
     db.add_event("envoi", application.get("company_name") or application["email"],
                  campaign_id=campaign["id"], application_id=application["id"])
+
+
+async def analyse_briefs(run_id: int, job_title: str) -> dict[str, str]:
+    """Rédige la fiche « enjeux » de chaque entreprise retenue pour une recherche.
+
+    Une fiche par entreprise, mémorisée : relancer ne coûte rien pour celles
+    déjà analysées. Renvoie {siren: fiche}.
+    """
+    if not compose.claude_available():
+        raise RuntimeError("clé Claude absente : l'analyse des enjeux n'est pas disponible")
+    settings = db.all_settings()
+    campaign = {"job_title": job_title}
+    recipients = pick_recipients(run_id)["recipients"]
+    semaphore = asyncio.Semaphore(4)
+    result: dict[str, str] = {}
+
+    async def one(recipient: dict) -> None:
+        siren = recipient.get("company_siren") or recipient["email"]
+        if recipient.get("company_brief"):
+            result[siren] = recipient["company_brief"]
+            return
+        async with semaphore:
+            try:
+                brief = await compose.claude_brief(recipient, compose.build_context(recipient, campaign, settings))
+            except Exception as exc:
+                log.warning("fiche impossible pour %s : %s", recipient.get("company_name"), exc)
+                return
+        db.set_company_brief(recipient.get("company_siren"), brief)
+        result[siren] = brief
+
+    await asyncio.gather(*(one(r) for r in recipients))
+    return result
 
 
 async def send_test(to: str, job_title: str, sample: dict | None = None) -> dict:

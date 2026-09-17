@@ -289,6 +289,29 @@ c3 = _build_contact("recrutement@acme.fr", False, "https://acme.fr/", NAV, firm)
 check(c3.category == "rh", "une boite de recrutement reste RH")
 
 # --------------------------------------------------------------------------
+print("\n== Ouverture adaptee a l'interlocuteur ==")
+from app.compose import DEFAULT_BODY, opening_for, _split_parts, build_context as _bc, render as _render
+ctx = {"poste": "product manager", "entreprise": "Acme"}
+check("{ouverture}" in DEFAULT_BODY and "{accroche}" in DEFAULT_BODY, "le gabarit par defaut contient {ouverture} et {accroche}")
+o = opening_for({"category": "metier", "is_manager": True, "role_title": "CPO"}, ctx)
+check("votre équipe" in o and "product manager" in o, "a un CPO : rejoindre son equipe en tant que product manager")
+o = opening_for({"category": "metier", "is_manager": False}, ctx)
+check("métier que je vise" in o, "a un pair : le meme metier, son equipe")
+o = opening_for({"category": "direction", "company_size": "10 à 19 salariés"}, ctx)
+check("tête de Acme" in o, "a un dirigeant de petite structure : rejoindre l'entreprise")
+o = opening_for({"category": "direction", "company_size": "250 à 499 salariés"}, ctx)
+check("orienter" in o, "a un dirigeant de grande entreprise : orienter la candidature")
+o = opening_for({"category": "rh"}, ctx)
+check("candidature spontanée" in o, "aux RH : la candidature classique")
+op, hk = _split_parts("OUVERTURE: Je vous écris car votre équipe produit m'intéresse.\nACCROCHE: Vos outils pour les PME industrielles répondent à un vrai besoin.")
+check(op.startswith("Je vous écris") and hk.startswith("Vos outils"), "reponse en deux parties decoupee")
+op2, hk2 = _split_parts("Un seul paragraphe sans étiquette, assez long pour compter.")
+check(op2 is None and hk2.startswith("Un seul"), "sans etiquettes : tout devient l'accroche, l'ouverture reste par regles")
+body = _render(DEFAULT_BODY, {**_bc({"first_name": "Aude", "last_name": "B", "company_name": "ACME SAS", "company_naf": "62.01Z"},
+                                    {"job_title": "product manager"}, {"sender_name": "V"}), "ouverture": "OUV", "accroche": "ACC"})
+check("Bonjour Aude B," in body and "OUV" in body and "ACC" in body and "{" not in body, "le gabarit rend salutation, ouverture et accroche")
+
+# --------------------------------------------------------------------------
 print("\n== Deduction plafonnee ==")
 crowded = Company(siren="2", name="BIGCO", domain="bigco.fr", headcount_code="32")
 crowded.directors = [

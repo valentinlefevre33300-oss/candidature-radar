@@ -166,6 +166,9 @@ function drawWizard() {
       <h1>${n} personne${n > 1 ? 's' : ''} à qui écrire<span class="dot-accent">.</span></h1>
       <div class="sub" style="color:var(--muted);margin:10px 0 18px">Décoche celles que tu ne veux pas. ${exTxt ? `<span class="tag plain" style="margin-left:0">écartés : ${esc(exTxt)}</span>` : ''}</div>
       ${w.recipients.length ? '' : '<div class="banner"><span>Aucun contact exploitable dans cette recherche. Reviens en arrière pour élargir la cible.</span></div>'}
+      ${w.recipients.length ? `<div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap">
+        <button class="btn btn-white btn-sm" id="wzBriefs" ${state.settings?.claude ? '' : 'disabled'}>🔎 Analyser les enjeux des entreprises</button>
+        <span class="hint">${state.settings?.claude ? 'Claude lit le site de chaque entreprise et résume activité et enjeux — à relire avant d’écrire.' : 'Clé Claude absente : analyse indisponible.'}</span></div>` : ''}
       <div class="list recip card-white" style="padding:8px" id="wzRecip">
         ${w.recipients.map(r => { const name = [r.first_name, r.last_name].filter(Boolean).join(' ');
           return `<div class="item"><input type="checkbox" data-e="${esc(r.email)}" ${w.chosen.has(r.email) ? 'checked' : ''} style="accent-color:var(--logo-to);width:16px;height:16px">
@@ -173,7 +176,8 @@ function drawWizard() {
             <div style="min-width:0"><div class="t" style="font-size:14px">${esc(r.email)}${contactTags(r)}</div>
               <div class="s">${name ? `<b>${esc(name)}</b>` : ''}${name && r.role_title ? ' — ' : ''}${esc((r.role_title || '').slice(0, 60))}</div></div>
             <div class="meta" style="text-align:left"><b>${esc(pretty(r.company_name))}</b>${esc([r.company_city, r.company_size].filter(Boolean).join(' · '))}</div>
-            <span class="catpill ${esc(r.category)}"><i></i>${esc(CATEGORY[r.category] || r.category)}</span></div>`; }).join('')}
+            <span class="catpill ${esc(r.category)}"><i></i>${esc(CATEGORY[r.category] || r.category)}</span>
+            ${r.company_brief ? `<div class="detail" style="padding-left:78px;white-space:pre-line">${esc(r.company_brief)}</div>` : ''}</div>`; }).join('')}
       </div>`;
     foot = `<button class="btn btn-accent btn-lg btn-block" id="wzNext" ${n ? '' : 'disabled'}>Continuer avec ${n} destinataire${n > 1 ? 's' : ''}</button>`;
   }
@@ -283,6 +287,16 @@ function bindWizard() {
     $$('#wzRecip input[type=checkbox]').forEach(c => c.onchange = () => { c.checked ? w.chosen.add(c.dataset.e) : w.chosen.delete(c.dataset.e);
       const n = w.chosen.size; const b = $('#wzNext'); b.disabled = !n; b.textContent = `Continuer avec ${n} destinataire${n > 1 ? 's' : ''}`; $('h1').innerHTML = `${n} personne${n > 1 ? 's' : ''} à qui écrire<span class="dot-accent">.</span>`; });
     $('#wzNext').onclick = () => { w.step = 3; drawWizard(); };
+    const briefs = $('#wzBriefs'); if (briefs) briefs.onclick = async () => {
+      const todo = w.recipients.filter(r => !r.company_brief).length;
+      briefs.disabled = true; briefs.textContent = `Analyse en cours… (${todo} entreprise${todo > 1 ? 's' : ''})`;
+      try {
+        const map = await api(`/api/runs/${w.runId}/briefs`, { method: 'POST', body: JSON.stringify({ job_title: w.job }) });
+        w.recipients.forEach(r => { const b = map[r.company_siren || r.email]; if (b) r.company_brief = b; });
+        toast(`${Object.keys(map).length} fiche${Object.keys(map).length > 1 ? 's' : ''} prête${Object.keys(map).length > 1 ? 's' : ''}`);
+      } catch (e) { toast(e.message); }
+      drawWizard();
+    };
     enableTilt($('#wzRecip'), 2);
   }
 
@@ -435,8 +449,8 @@ async function showApplication(appId) {
         <div class="muted" style="font-size:13px;margin-top:4px">À ${esc(a.email)}${a.sent_at ? ` · envoyé le ${fmtDay(a.sent_at)}` : a.scheduled_at ? ` · programmé ${fmtDate(a.scheduled_at)}` : ''}${a.opens ? ` · ouvert ${a.opens}×` : ''}</div></div>
       <button class="btn btn-text" id="mdClose">×</button>
     </div>
-    <div class="mail-preview" style="margin-top:18px;box-shadow:none;background:var(--card)">${a.body_text ? esc(a.body_text) : '<span class="muted">Le mail est rédigé au moment de l’envoi. Tu peux le rédiger maintenant pour le relire.</span>'}</div>
-    ${a.hook ? `<div class="hint" style="margin-top:10px">Paragraphe personnalisé : « ${esc(a.hook)} »</div>` : ''}
+    ${a.company_brief ? `<div class="banner info" style="margin-top:16px;white-space:pre-line;display:block"><b>Enjeux compris</b>\n${esc(a.company_brief)}</div>` : ''}
+    <div class="mail-preview" style="margin-top:${a.company_brief ? 12 : 18}px;box-shadow:none;background:var(--card)">${a.body_text ? esc(a.body_text) : '<span class="muted">Le mail est rédigé au moment de l’envoi. Tu peux le rédiger maintenant pour le relire.</span>'}</div>
     ${a.error ? `<div class="banner danger" style="margin-top:12px"><span>${esc(a.error)}</span></div>` : ''}
     <div style="display:flex;gap:8px;margin-top:18px;justify-content:flex-end">${a.status === 'programme' ? `<button class="btn btn-white" id="mdCompose">${a.body_text ? 'Rédiger à nouveau' : 'Rédiger maintenant'}</button>` : ''}</div>`);
   render();

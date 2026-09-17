@@ -1,10 +1,16 @@
-"""Rédaction des mails : un squelette commun, un paragraphe propre à chaque entreprise.
+"""Rédaction des mails : un squelette commun, deux paragraphes propres à chaque envoi.
 
 Le gabarit contient des variables entre accolades, toutes remplies depuis ce que
-l'on sait du contact et de l'entreprise — sauf `{accroche}` : ce paragraphe est
-rédigé pour chaque entreprise par Claude, à partir de son activité, sa ville, sa
-taille et la page d'accueil de son site. Sans clé API, ou si l'appel échoue, un
-repli par règles prend la main : le mail part quand même, juste moins vivant.
+l'on sait du contact et de l'entreprise. Deux d'entre elles sont rédigées pour
+chaque destinataire :
+
+  - `{ouverture}` : pourquoi on écrit à CETTE personne. À un CPO, on dit qu'on
+    veut rejoindre son équipe en tant que product manager ; à un dirigeant,
+    qu'on veut rejoindre l'entreprise et qu'il saura orienter ; aux RH, la
+    candidature classique. Des règles y pourvoient sans clé API ; Claude affine.
+  - `{accroche}` : ce qu'on a compris de l'entreprise et de ses enjeux, relié à
+    ce que le candidat apporte. Nourrie par une fiche « enjeux » rédigée une
+    fois par entreprise à partir du texte de son site.
 
 Une règle non négociable pour la rédaction automatique : n'affirmer que ce que
 les données fournies permettent d'affirmer. Un recruteur repère une flatterie
@@ -26,6 +32,8 @@ log = logging.getLogger(__name__)
 
 VARIABLES: dict[str, str] = {
     "salutation": "« Bonjour Prénom Nom, » — ou « Bonjour, » si le nom est inconnu",
+    "ouverture": "pourquoi on écrit à cette personne, selon sa fonction (rédigée pour chaque envoi)",
+    "accroche": "ce qu'on a compris de l'entreprise, relié à ce qu'on apporte (rédigée pour chaque envoi)",
     "prenom": "prénom du contact",
     "nom": "nom du contact",
     "entreprise": "nom de l'entreprise, nettoyé",
@@ -33,7 +41,6 @@ VARIABLES: dict[str, str] = {
     "ville": "ville de l'entreprise",
     "secteur": "secteur d'activité",
     "taille": "tranche d'effectif",
-    "accroche": "paragraphe rédigé pour cette entreprise",
     "moi": "ton nom",
     "signature": "ta signature (réglages)",
 }
@@ -41,7 +48,7 @@ VARIABLES: dict[str, str] = {
 DEFAULT_SUBJECT = "Candidature spontanée — {poste} — {moi}"
 DEFAULT_BODY = """{salutation}
 
-Je me permets de vous adresser ma candidature spontanée pour un poste de {poste} au sein de {entreprise}.
+{ouverture}
 
 {accroche}
 
@@ -70,7 +77,7 @@ def pretty_company(raw: str | None) -> str:
 
 
 def build_context(application: dict, campaign: dict, settings: dict) -> dict[str, str]:
-    """Toutes les variables du gabarit, sauf `{accroche}` qui est rédigée à part."""
+    """Toutes les variables du gabarit, sauf celles qui sont rédigées à part."""
     first = (application.get("first_name") or "").strip()
     last = (application.get("last_name") or "").strip()
     name = " ".join(part for part in (first, last) if part)
@@ -97,6 +104,47 @@ def render(template: str, context: dict[str, str]) -> str:
     return text.strip()
 
 
+# ------------------------------------------------------------- ouverture ---
+
+def _is_small(size_label: str | None) -> bool:
+    match = re.match(r"\s*(\d[\d\s]*)", size_label or "")
+    return bool(match) and int(match.group(1).replace(" ", "")) < 50
+
+
+def recipient_kind(application: dict) -> str:
+    """Étiquette lisible de la relation au poste visé, pour les règles et le prompt."""
+    category = application.get("category")
+    if category == "metier":
+        return "dirige le service du métier visé" if application.get("is_manager") else "exerce le métier visé"
+    if category == "direction":
+        return "dirige l'entreprise"
+    if category == "rh":
+        return "ressources humaines"
+    return "fonction inconnue"
+
+
+def opening_for(application: dict, context: dict[str, str]) -> str:
+    """Phrase d'ouverture adaptée à la fonction du destinataire, par règles."""
+    poste = context.get("poste") or "ce poste"
+    company = context.get("entreprise") or "votre entreprise"
+    category = application.get("category")
+    if category == "metier" and application.get("is_manager"):
+        return (f"Je vous écris directement : c'est votre équipe que j'aimerais rejoindre, "
+                f"en tant que {poste}.")
+    if category == "metier":
+        return (f"Je vous écris parce que vous exercez le métier que je vise : j'aimerais rejoindre "
+                f"votre équipe en tant que {poste}.")
+    if category == "direction":
+        if _is_small(application.get("company_size")):
+            return (f"Je vous écris directement, à la tête de {company} : j'aimerais la rejoindre "
+                    f"en tant que {poste}.")
+        return (f"Je me permets de vous écrire directement : j'aimerais rejoindre {company} en tant "
+                f"que {poste}, et vous êtes la personne la mieux placée pour orienter ma candidature "
+                f"vers la bonne équipe.")
+    return (f"Je me permets de vous adresser ma candidature spontanée pour un poste de {poste} "
+            f"au sein de {company}.")
+
+
 # ------------------------------------------------------------- accroche ---
 
 def degraded_hook(context: dict[str, str]) -> str:
@@ -117,36 +165,77 @@ def degraded_hook(context: dict[str, str]) -> str:
             f"{role} : une équipe à taille humaine où je pourrai contribuer rapidement.")
 
 
-SYSTEM_PROMPT = """Tu rédiges, pour une candidature spontanée, le paragraphe qui explique pourquoi le candidat écrit à cette entreprise précisément. Il s'insère au milieu d'un mail déjà rédigé (salutation et formule de politesse sont ailleurs).
+SYSTEM_BRIEF = """Tu prépares une candidature spontanée : à partir du texte du site d'une entreprise et de quelques données publiques, tu résumes ce qu'elle fait et quels sont ses enjeux probables.
 
-Règles :
-- 2 à 3 phrases, 70 mots au plus, à la première personne, en français, tutoiement exclu.
-- Appuie-toi UNIQUEMENT sur les faits fournis (activité, ville, taille, description du site, fonction de l'interlocuteur). N'invente ni chiffre, ni produit, ni actualité, ni valeur d'entreprise. Si les faits sont minces, parle du type de structure et du poste, pas de l'entreprise en détail.
-- Ton sobre et direct : pas de superlatifs, pas de « leader », « incontournable », « passionnant », pas de flatterie.
-- La phrase précédente du mail cite déjà le nom de l'entreprise et le poste : ne les répète pas, ne commence pas par « Je m'adresse à » ni par le nom de l'entreprise. Parle de ce qu'elle fait (« votre activité de… », « vos outils de… »).
-- Fais le lien entre ce que fait l'entreprise et ce que le candidat apporte, d'après son profil.
-- Pas de salutation, pas de formule finale, pas de guillemets, pas de puces, pas de titre. Renvoie le paragraphe seul."""
+Réponds en français, en trois lignes, 100 mots au plus, exactement sous cette forme :
+Activité : <ce qu'elle fait, pour qui, comment>
+Enjeux probables : <deux ou trois enjeux plausibles au vu de son activité, de sa taille et de son marché — formulés comme des hypothèses prudentes>
+Pour un <poste> : <en quoi ce poste peut compter chez elle>
+
+Uniquement d'après les éléments fournis. Si le site dit peu de choses, écris « Peu d'informations » et reste général. Pas de superlatifs, pas de jugement de valeur."""
+
+SYSTEM_PERSONALIZE = """Tu rédiges deux courts paragraphes d'une candidature spontanée, adressée à une personne précise dans une entreprise précise. Ils s'insèrent dans un mail dont la salutation, la mention du CV, la formule finale et la signature existent déjà.
+
+OUVERTURE (une à deux phrases, 35 mots au plus) : pourquoi le candidat écrit à CETTE personne, d'après sa fonction, et ce qu'il veut. À quelqu'un qui dirige le service du métier visé (CTO, CPO, head of, responsable…) : c'est son équipe qu'il veut rejoindre, en tant que <poste visé>. À quelqu'un qui dirige l'entreprise : il veut rejoindre l'entreprise, et cette personne saura orienter sa candidature. À un pair du métier : il vise le même métier et son équipe. Aux ressources humaines : une candidature spontanée classique pour le poste.
+
+ACCROCHE (deux à trois phrases, 70 mots au plus) : montre que le candidat a compris ce que fait l'entreprise et ses enjeux probables — d'après la fiche fournie — et relie-les à ce qu'il apporte, d'après son profil. Parle de ce que fait l'entreprise (« votre activité de… », « vos outils pour… »), sans la renommer.
+
+Règles : première personne, français, vouvoiement. UNIQUEMENT les faits fournis : aucun chiffre, produit, client ou actualité non cité. Sobre : pas de superlatifs (« leader », « incontournable », « passionnant »), pas de flatterie, pas de « je m'adresse à ». Le nom de l'entreprise et le poste n'apparaissent qu'une fois au total, dans l'ouverture. Pas de salutation, pas de formule finale, pas de guillemets, pas de puces.
+
+Réponds exactement sous la forme :
+OUVERTURE: <texte>
+ACCROCHE: <texte>"""
 
 
-def _facts(context: dict[str, str], application: dict, profile: str) -> str:
-    lines = [f"Poste visé : {context.get('poste') or '?'}",
-             f"Entreprise : {context.get('entreprise') or '?'}"]
+def _company_facts(application: dict, context: dict[str, str], *, with_site: bool) -> list[str]:
+    lines = [f"Entreprise : {context.get('entreprise') or '?'}"]
     if context.get("secteur"):
-        lines.append(f"Activité : {context['secteur']}" + (f" (NAF {application.get('company_naf')})" if application.get("company_naf") else ""))
+        lines.append(f"Activité déclarée : {context['secteur']}"
+                     + (f" (NAF {application.get('company_naf')})" if application.get("company_naf") else ""))
     if context.get("ville"):
         lines.append(f"Ville : {context['ville']}")
     if context.get("taille"):
         lines.append(f"Effectif : {context['taille']}")
     if application.get("company_tagline"):
-        lines.append(f"Page d'accueil du site : {application['company_tagline']}")
-    role = application.get("role_title")
+        lines.append(f"Titre et description du site : {application['company_tagline']}")
+    if with_site and application.get("company_about"):
+        lines.append(f"Texte du site :\n{str(application['company_about'])[:2000]}")
+    return lines
+
+
+def _brief_prompt(application: dict, context: dict[str, str]) -> str:
+    lines = [f"Poste visé par le candidat : {context.get('poste') or '?'}"]
+    lines += _company_facts(application, context, with_site=True)
+    return "\n".join(lines) + "\n\nRédige la fiche."
+
+
+def _parts_prompt(context: dict[str, str], application: dict, profile: str, brief: str | None) -> str:
     who = " ".join(p for p in (application.get("first_name"), application.get("last_name")) if p)
-    if who or role:
-        lines.append(f"Interlocuteur : {who or 'inconnu'}" + (f" — {role}" if role else ""))
-    lines.append("")
-    lines.append("Profil du candidat :")
-    lines.append(profile.strip() or "(non renseigné — reste général sur ses motivations)")
-    return "\n".join(lines)
+    lines = [f"Poste visé : {context.get('poste') or '?'}",
+             f"Destinataire : {who or 'inconnu'} — {application.get('role_title') or 'fonction inconnue'} "
+             f"({recipient_kind(application)})"]
+    lines += _company_facts(application, context, with_site=not brief)
+    if brief:
+        lines.append(f"Fiche enjeux :\n{brief}")
+    lines += ["", "Profil du candidat :",
+              profile.strip() or "(non renseigné — reste général sur ses motivations)"]
+    return "\n".join(lines) + "\n\nRédige les deux paragraphes."
+
+
+_PARTS_RE = re.compile(r"OUVERTURE\s*:\s*(.+?)\s*ACCROCHE\s*:\s*(.+)$", re.IGNORECASE | re.DOTALL)
+
+
+def _clean(text: str) -> str:
+    text = text.strip().strip('"«» \n')
+    return re.sub(r"\s+", " ", text)
+
+
+def _split_parts(text: str) -> tuple[str | None, str]:
+    """(ouverture, accroche) depuis la réponse étiquetée ; sans étiquettes, tout est accroche."""
+    match = _PARTS_RE.search(text or "")
+    if not match:
+        return None, _clean(text)
+    return _clean(match.group(1)), _clean(match.group(2))
 
 
 _client: anthropic.AsyncAnthropic | None = None
@@ -163,29 +252,39 @@ def _get_client() -> anthropic.AsyncAnthropic:
     return _client
 
 
-async def claude_hook(context: dict[str, str], application: dict, profile: str) -> str:
-    """Demande le paragraphe à Claude. Lève une exception si rien d'exploitable ne revient."""
-    client = _get_client()
-    response = await client.beta.messages.create(
+async def _ask(system: str, user: str, max_tokens: int) -> str:
+    """Un appel court, prompt système en cache, repli serveur en cas de refus."""
+    response = await _get_client().beta.messages.create(
         model=CLAUDE_MODEL,
-        max_tokens=400,
-        # Le prompt système est identique pour toutes les entreprises : il est
-        # mis en cache, seul le bloc de faits change d'un mail à l'autre.
-        system=[{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
-        messages=[{"role": "user", "content": _facts(context, application, profile)
-                   + "\n\nRédige le paragraphe."}],
+        max_tokens=max_tokens,
+        system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
+        messages=[{"role": "user", "content": user}],
         output_config={"effort": "low"},
         betas=["server-side-fallback-2026-07-01"],
         fallbacks="default",
     )
     if response.stop_reason == "refusal":
         raise RuntimeError("le modèle a refusé la demande")
-    text = " ".join(block.text for block in response.content if block.type == "text").strip()
-    text = text.strip('"«» \n')
-    text = re.sub(r"\s+", " ", text)
+    return " ".join(block.text for block in response.content if block.type == "text").strip()
+
+
+async def claude_brief(application: dict, context: dict[str, str]) -> str:
+    """Fiche « enjeux » d'une entreprise. Une par entreprise, réutilisée ensuite."""
+    text = await _ask(SYSTEM_BRIEF, _brief_prompt(application, context), 500)
+    text = re.sub(r"[ \t]+", " ", text).strip().strip('"«»')
     if len(text) < 40:
+        raise RuntimeError("fiche trop courte")
+    return text[:900]
+
+
+async def claude_parts(context: dict[str, str], application: dict, profile: str,
+                       brief: str | None) -> tuple[str | None, str]:
+    """(ouverture, accroche) rédigées pour ce destinataire."""
+    opening, hook = _split_parts(await _ask(SYSTEM_PERSONALIZE,
+                                            _parts_prompt(context, application, profile, brief), 600))
+    if len(hook) < 40:
         raise RuntimeError("réponse trop courte")
-    return text
+    return opening, hook
 
 
 # ----------------------------------------------------------------- profil ---
@@ -233,19 +332,31 @@ async def compose(application: dict, campaign: dict, settings: dict, *,
                   personalize: bool = True) -> dict:
     """Rend le mail complet pour une candidature.
 
-    Renvoie subject, body_text, body_html, hook et `engine` (« claude » ou « regles »)
-    pour que l'interface puisse dire d'où vient le paragraphe.
+    Renvoie subject, body_text, body_html, opening, hook, brief et `engine`
+    (« claude » ou « regles ») pour que l'interface dise d'où vient le texte.
     """
     context = build_context(application, campaign, settings)
-    engine = "regles"
+    context["ouverture"] = opening_for(application, context)
     hook = degraded_hook(context)
+    brief = application.get("company_brief") or None
+    engine = "regles"
+
     if personalize and claude_available():
+        if not brief:
+            try:
+                brief = await claude_brief(application, context)
+            except Exception as exc:  # on rédige quand même, sans la fiche
+                log.warning("fiche enjeux indisponible pour %s : %s",
+                            application.get("company_name"), exc)
         try:
-            hook = await claude_hook(context, application, profile_text(settings))
+            opening, hook = await claude_parts(context, application, profile_text(settings), brief)
+            if opening:
+                context["ouverture"] = opening
             engine = "claude"
         except Exception as exc:  # quota, réseau, refus… le mail doit partir quand même
             log.warning("rédaction Claude indisponible pour %s : %s",
                         application.get("company_name"), exc)
+
     context["accroche"] = hook
     subject = render(campaign.get("subject_tpl") or DEFAULT_SUBJECT, context)
     body_text = render(campaign.get("body_tpl") or DEFAULT_BODY, context)
@@ -253,6 +364,8 @@ async def compose(application: dict, campaign: dict, settings: dict, *,
         "subject": subject,
         "body_text": body_text,
         "body_html": to_html(body_text, pixel_url(application.get("token"))),
+        "opening": context["ouverture"],
         "hook": hook,
+        "brief": brief,
         "engine": engine,
     }

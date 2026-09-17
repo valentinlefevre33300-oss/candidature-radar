@@ -38,6 +38,7 @@ class Company:
     domain_confidence: float = 0.0
     domain_method: str | None = None   # comment le domaine a été trouvé
     tagline: str | None = None         # titre + description de la page d'accueil
+    about: str | None = None           # texte utile du site (accueil, à propos), pour comprendre l'activité
 
     @property
     def slug_source(self) -> str:

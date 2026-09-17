@@ -41,9 +41,13 @@ mais rarement celle du dirigeant. L'outil fait la jonction :
    (« Conseil 796, Tech 630… »), lance la recherche, puis retient **une personne par
    entreprise**, la mieux placée, en écartant celles déjà contactées et les prestataires.
 8. **Rédiger** — un squelette à variables (`{salutation}`, `{entreprise}`, `{poste}`…)
-   dont le paragraphe `{accroche}` est écrit par Claude pour chaque entreprise, à partir
-   de son activité, sa ville, sa taille et la page d'accueil de son site. Sans clé API,
-   des phrases par règles prennent le relais : le mail part quand même.
+   dont deux paragraphes sont écrits pour chaque envoi. `{ouverture}` s'adapte à la
+   **fonction du destinataire** : à un CPO, « c'est votre équipe que j'aimerais rejoindre
+   en tant que product manager » ; à un dirigeant, « rejoindre l'entreprise, vous saurez
+   orienter » ; aux RH, la candidature classique. `{accroche}` s'appuie sur une **fiche
+   « enjeux »** que Claude rédige une fois par entreprise à partir du texte de son site
+   (accueil, à propos) — affichée dans l'assistant pour que tu vérifies qu'on a compris
+   la boîte avant d'écrire. Sans clé API, des phrases par règles prennent le relais.
 9. **Envoyer et suivre** — depuis ton Gmail (OAuth), CV joint, un mail toutes les
    quelques minutes aux heures de bureau, plafonds par jour et par mois. Un pixel compte
    les ouvertures (une fois déployé), la lecture des en-têtes Gmail détecte les réponses.
