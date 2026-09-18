@@ -193,7 +193,9 @@ details.adv .adv-body { margin-top: 16px; display: grid; gap: 16px; grid-templat
 
 .runs .item { grid-template-columns: 52px 1fr auto; }
 .results .item { grid-template-columns: 22px 52px minmax(0, 1.5fr) minmax(0, 1fr) auto auto; }
-.firms .item { grid-template-columns: 24px 40px minmax(0, 1.5fr) minmax(0, .7fr) minmax(0, 1fr); }
+.firms .item { grid-template-columns: 24px 40px minmax(0, 1.4fr) minmax(0, .9fr) minmax(0, 1.1fr); }
+.firms .item > .meta { white-space: normal; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.firms .item > .meta > b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .suivi .item { grid-template-columns: 52px minmax(0, 1.4fr) minmax(0, 1fr) auto minmax(140px, 1fr) auto; }
 .recip .item { grid-template-columns: 24px 40px minmax(0, 1.4fr) minmax(0, 1fr) auto auto; }
 @media (max-width: 900px) {
