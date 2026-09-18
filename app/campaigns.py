@@ -22,7 +22,7 @@ import httpx
 
 from . import compose, db, gmail
 from .config import DAILY_CAP, DRY_RUN, MONTHLY_CAP, SEND_INTERVAL
-from .naf import SECTORS, codes_for
+from .naf import SECTORS, codes_for, relevant_sectors
 from .models import SearchQuery
 from .sources.sirene import count_companies
 
@@ -698,8 +698,13 @@ async def reply_loop() -> None:
 # ------------------------------------------------------------------ marché ---
 
 async def market(cities: list[dict], agglomeration: bool, zone: str | None,
-                 min_headcount: int | None, max_headcount: int | None) -> list[dict]:
-    """Nombre d'entreprises par secteur pour une cible : l'« analyse du marché »."""
+                 min_headcount: int | None, max_headcount: int | None,
+                 job_title: str = "") -> list[dict]:
+    """Nombre d'entreprises par secteur pour une cible : l'« analyse du marché ».
+
+    Chaque ligne dit aussi si le secteur est pertinent pour le poste visé.
+    """
+    wanted = relevant_sectors(job_title)
     department = zone if zone and len(zone) <= 3 and not cities else None
     postal = zone if zone and len(zone) == 5 and not cities else None
     semaphore = asyncio.Semaphore(4)
@@ -711,7 +716,8 @@ async def market(cities: list[dict], agglomeration: bool, zone: str | None,
                                 min_headcount=min_headcount, max_headcount=max_headcount, limit=1)
             async with semaphore:
                 total = await count_companies(client, query)
-            return {"key": key, "label": value["label"], "count": total}
+            return {"key": key, "label": value["label"], "count": total,
+                    "relevant": wanted is None or key in wanted}
 
         rows = await asyncio.gather(*(one(k, v) for k, v in SECTORS.items()))
     return sorted(rows, key=lambda r: -r["count"])

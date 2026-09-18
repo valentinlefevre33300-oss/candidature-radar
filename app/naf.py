@@ -95,6 +95,24 @@ SECTORS: dict[str, dict[str, object]] = {
 }
 
 
+# Secteurs où un métier a des chances d'exister. Un product owner ne travaille pas
+# dans le BTP ni l'immobilier ; un développeur, rarement dans l'hôtellerie.
+DOMAIN_SECTORS: dict[str, list[str]] = {
+    "produit": ["tech", "data_ia", "design", "marketing", "media", "commerce", "finance"],
+    "tech": ["tech", "data_ia", "conseil", "ingenierie", "media", "finance", "commerce", "sante"],
+    "design": ["design", "marketing", "media", "tech", "commerce"],
+    "marketing": ["marketing", "media", "commerce", "tech", "design", "formation"],
+    "projet": ["tech", "data_ia", "conseil", "ingenierie", "marketing", "media"],
+}
+
+
+def relevant_sectors(job_title: str) -> list[str] | None:
+    """Les secteurs à présélectionner pour ce poste ; None = pas d'avis (tout)."""
+    from .domains import job_domain   # import tardif : domains importe naf
+    domain = job_domain(job_title or "")
+    return list(DOMAIN_SECTORS[domain]) if domain in DOMAIN_SECTORS else None
+
+
 def codes_for(sector_keys: list[str]) -> list[str]:
     """Agrège les codes NAF de plusieurs secteurs, sans doublon."""
     out: list[str] = []

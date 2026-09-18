@@ -461,6 +461,16 @@ check(set(find_evidence("Recrutement : developpeur backend, UX designer, chef de
 check("developpeur" in find_evidence("Notre developpeur Python", "tech") and "python" not in find_evidence("Notre developpeur Python", "tech"), "developpeur oui, python non")
 
 # --------------------------------------------------------------------------
+print("\n# Secteurs preselectionnes selon le poste")
+from app.naf import relevant_sectors
+_po = relevant_sectors("Product owner")
+check(_po is not None and "tech" in _po and "design" in _po, "product owner : tech et design preselectionnes")
+check("btp" not in _po and "immobilier" not in _po and "logistique" not in _po, "ni BTP, ni immobilier, ni transport")
+check(relevant_sectors("comptable") is None, "poste sans avis : tous les secteurs")
+from app.sources.sirene import headcount_codes
+check("00" not in headcount_codes(1, None) and "11" in headcount_codes(1, None), "toutes tailles = au moins un salarie (jamais 0 ni non renseigne)")
+
+# --------------------------------------------------------------------------
 print("\n" + "=" * 62)
 if FAILURES:
     print(f"{len(FAILURES)} ECHEC(S) :")

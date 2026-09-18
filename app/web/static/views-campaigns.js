@@ -171,17 +171,19 @@ function drawWizard() {
   }
 
   if (step === 1) {
-    const rows = (w.market || []).filter(r => r.count > 0);
-    const shown = w.showAll ? rows : rows.slice(0, 6);
+    const rows = (w.market || []).filter(r => r.count > 0).sort((a, b) => (b.relevant - a.relevant) || (b.count - a.count));
+    const nRel = rows.filter(r => r.relevant).length, hasAdvice = nRel && nRel < rows.length;
+    const shown = w.showAll ? rows : rows.slice(0, Math.max(6, hasAdvice ? nRel : 0));
     const total = rows.filter(r => w.sectors.has(r.key)).reduce((a, r) => a + r.count, 0);
+    const fmt = (n) => n >= 10000 ? '10 000+' : n.toLocaleString('fr-FR');
     inner = `
       <p class="kicker">D’après ta cible · ${esc(w.job)} · ${esc(describeCities(w.cities, w.agglo))}</p>
-      <h1>${total.toLocaleString('fr-FR')} entreprises ciblées<span class="dot-accent">.</span></h1>
-      <div class="sub" style="color:var(--muted);margin:10px 0 24px">Tout est inclus par défaut. Retire ce que tu veux, le total se met à jour. À l’étape suivante, tu choisis les entreprises une par une.</div>
+      <h1>${fmt(total)} entreprises ciblées<span class="dot-accent">.</span></h1>
+      <div class="sub" style="color:var(--muted);margin:10px 0 24px">${hasAdvice ? `Présélection pour <b style="color:var(--ink)">${esc(w.job)}</b> : les secteurs où ce métier existe. Les autres restent disponibles, mais un mail y a peu de chances d’aboutir.` : 'Tout est inclus par défaut. Retire ce que tu veux, le total se met à jour.'} À l’étape suivante, tu choisis les entreprises une par une.</div>
       <div class="card-white" id="wzSectors">
-        ${shown.map(r => `<div class="sector-row"><span class="nm">${esc(r.label.split(' / ')[0])}</span><span class="ct">${r.count.toLocaleString('fr-FR')}</span>
+        ${shown.map(r => `<div class="sector-row" style="${r.relevant ? '' : 'opacity:.55'}"><span class="nm">${esc(r.label.split(' / ')[0])}${r.relevant ? '' : ' <span class="muted" style="font-weight:400;font-size:12px">— peu probable pour ce poste</span>'}</span><span class="ct">${fmt(r.count)}</span>
           <span class="muted" style="font-size:12px;font-weight:600">${w.sectors.has(r.key) ? 'Inclus' : 'Exclu'}</span><button class="switch ${w.sectors.has(r.key) ? 'on' : ''}" data-k="${r.key}" aria-label="inclure"></button></div>`).join('')}
-        ${rows.length > 6 ? `<div class="sector-row"><button class="btn btn-text btn-sm" id="wzMore">${w.showAll ? 'Réduire' : `Voir les ${rows.length - 6} autres secteurs`}</button></div>` : ''}
+        ${rows.length > shown.length || w.showAll ? `<div class="sector-row"><button class="btn btn-text btn-sm" id="wzMore">${w.showAll ? 'Réduire' : `Voir les ${rows.length - shown.length} autres secteurs`}</button></div>` : ''}
       </div>`;
     foot = `<button class="btn btn-accent btn-lg btn-block" id="wzNext" ${w.sectors.size ? '' : 'disabled'}>Voir les entreprises</button><span class="hint">La liste des entreprises de ta cible, à trier à la main.</span>`;
   }
@@ -329,8 +331,8 @@ function bindWizard() {
       if (!w.job.trim()) { $('#wzJob').classList.add('err'); $('#wzJob').focus(); return; }
       $('#wzNext').disabled = true; $('#wzHint').textContent = 'Comptage des entreprises par secteur…';
       try {
-        w.market = await api('/api/market', { method: 'POST', body: JSON.stringify({ cities: w.cities, agglomeration: w.agglo, ...headcountRange(w.head, w.min, w.max) }) });
-        w.sectors = new Set(w.market.filter(r => r.count > 0).map(r => r.key));
+        w.market = await api('/api/market', { method: 'POST', body: JSON.stringify({ job_title: w.job.trim(), cities: w.cities, agglomeration: w.agglo, ...headcountRange(w.head, w.min, w.max) }) });
+        w.sectors = new Set(w.market.filter(r => r.count > 0 && r.relevant).map(r => r.key));
         w.step = 1; drawWizard();
       } catch (e) { $('#wzNext').disabled = false; $('#wzHint').className = 'hint err'; $('#wzHint').textContent = e.message; }
     };

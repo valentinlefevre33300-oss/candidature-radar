@@ -45,7 +45,7 @@ export const SECTOR_FAMILY = {
 };
 export const FAMILY_INK = { tech: 'var(--tech-ink)', biz: 'var(--biz-ink)', ux: 'var(--ux-ink)', data: 'var(--data-ink)' };
 export const HEADCOUNT = [
-  { key: 'all', label: 'Toutes tailles', min: null, max: null },
+  { key: 'all', label: 'Toutes tailles (avec salariés)', min: 1, max: null },
   { key: 'tpe', label: '1 – 9', min: 1, max: 9 },
   { key: 'pme', label: '10 – 249', min: 10, max: 249 },
   { key: 'eti', label: '250 +', min: 250, max: null },

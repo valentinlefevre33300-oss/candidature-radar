@@ -695,6 +695,7 @@ async def dashboard() -> dict:
 
 
 class MarketPayload(BaseModel):
+    job_title: str = ""
     cities: list[dict] = Field(default_factory=list)
     agglomeration: bool = False
     zone: str | None = None
@@ -706,7 +707,7 @@ class MarketPayload(BaseModel):
 async def market(payload: MarketPayload) -> list[dict]:
     cities = [c for c in payload.cities if c.get("code")]
     return await engine.market(cities, payload.agglomeration, (payload.zone or "").strip() or None,
-                               payload.min_headcount, payload.max_headcount)
+                               payload.min_headcount, payload.max_headcount, payload.job_title)
 
 
 @app.get("/api/runs/{run_id}/recipients")
