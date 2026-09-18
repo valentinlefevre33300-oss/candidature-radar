@@ -10,6 +10,16 @@ export async function api(url, opts = {}) {
   if (!res.ok) { let d = ''; try { d = (await res.json()).detail; } catch {} throw new Error(typeof d === 'string' && d ? d : res.statusText); }
   return res.status === 204 ? null : res.json();
 }
+/* Télécharge un fichier produit par une requête POST (export d'une sélection). */
+export async function download(url, body, filename) {
+  const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (res.status === 401) { location.href = '/login'; return; }
+  if (!res.ok) { let d = ''; try { d = (await res.json()).detail; } catch {} throw new Error(d || res.statusText); }
+  const blob = await res.blob();
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+export const capName = (s) => String(s || '').toLowerCase().replace(/(^|[\s-])\S/g, m => m.toUpperCase());
 export async function upload(url, formData) {
   const res = await fetch(url, { method: 'POST', body: formData });
   if (!res.ok) { let d = ''; try { d = (await res.json()).detail; } catch {} throw new Error(d || res.statusText); }
@@ -42,12 +52,17 @@ export const HEADCOUNT = [
   { key: 'custom', label: 'Précis…', min: null, max: null },
 ];
 
+// Zone par défaut : Bordeaux et sa métropole (les 28 communes). Modifiable dans chaque formulaire.
+export const DEFAULT_CITIES = [{ code: '33063', name: 'Bordeaux', department: '33', lat: 44.8624, lon: -0.5848, population: 267991,
+                                  postal_codes: ['33000', '33100', '33200', '33300', '33800'], epci: '243300316' }];
+export const defaultZone = () => ({ cities: DEFAULT_CITIES.map(c => ({ ...c, postal_codes: [...c.postal_codes] })), agglo: true });
+
 export const state = {
   sectors: [],
   settings: null,
-  form: { job: '', cities: [], agglo: false, head: 'pme', min: '', max: '', limit: 25, sectors: new Set(), keywords: '', useSearch: true, smtp: false },
+  form: { job: '', ...defaultZone(), head: 'pme', min: '', max: '', limit: 25, sectors: new Set(), keywords: '', useSearch: true, smtp: false },
   job: null,
-  results: { filter: 'all', hideLow: true, q: '', open: new Set(), dismissedBanner: false },
+  results: { filter: 'all', hideLow: true, q: '', open: new Set(), sel: new Set(), dismissedBanner: false },
   suivi: { filter: 'a_contacter' },
   wizard: null,
   campaign: { filter: '', q: '', page: 1, activity: false },

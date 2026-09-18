@@ -1,5 +1,5 @@
 /* Vues : Recherche, Résultats d'une recherche, Suivi. */
-import { $, $$, esc, api, state, toast, fmtDate, sectorLabel, monogram, pageHead, enableTilt, contactTags,
+import { download, $, $$, esc, api, state, toast, fmtDate, sectorLabel, monogram, pageHead, enableTilt, contactTags,
          cityPicker, describeCities, runZone,
          STATUS, CATEGORY, CAT_FAMILY, SECTOR_FAMILY, FAMILY_INK, HEADCOUNT } from './core.js';
 
@@ -216,13 +216,13 @@ export async function renderRun(id) {
 
   const secs = (run.sectors || '').split(',').filter(Boolean).map(sectorLabel).join(', ');
   const zone = runZone(run);
-  const r = state.results; r.open = new Set(); r.dismissedBanner = false;
+  const r = state.results; r.open = new Set(); r.sel = new Set(); r.dismissedBanner = false;
 
   view.innerHTML = `
     ${pageHead({ back: { href: '#/recherche', label: 'Recherches' },
                  kicker: esc([secs, zone, fmtDate(run.started_at)].filter(Boolean).join(' · ')), title: esc(run.job_title),
                  sub: `${run.companies ?? 0} entreprises explorées, ${rows.length} contact${rows.length > 1 ? 's' : ''} trouvé${rows.length > 1 ? 's' : ''}. Clique une ligne pour lire pourquoi elle est là.`,
-                 right: `<a class="btn btn-white" href="/api/runs/${id}/export">Exporter CSV</a><a class="btn btn-accent" href="#/campagnes/nouvelle?run=${id}">Créer une campagne</a>` })}
+                 right: `<button class="btn btn-white" id="exportBtn">Exporter CSV</button><a class="btn btn-accent" href="#/campagnes/nouvelle?run=${id}">Créer une campagne</a>` })}
     <div class="toolbar">
       <div class="pills on-paper" id="catSeg">
         ${[['all', 'Tous'], ['metier', 'Métier'], ['direction', 'Direction'], ['rh', 'RH'], ['nominatif', 'Nominatifs'], ['generique', 'Génériques']]
@@ -238,6 +238,10 @@ export async function renderRun(id) {
   $$('#catSeg .pill').forEach(b => b.onclick = () => { r.filter = b.dataset.k; renderRun(id); });
   $('#hideLow').onchange = e => { r.hideLow = e.target.checked; drawRows(rows); };
   $('#q').oninput = e => { r.q = e.target.value.toLowerCase(); drawRows(rows); };
+  $('#exportBtn').onclick = () => {
+    if (!r.sel.size) { location.href = `/api/runs/${id}/export`; return; }
+    download(`/api/runs/${id}/export`, { emails: [...r.sel] }, `contacts-${id}-selection.csv`).catch(e => toast(e.message));
+  };
   drawRows(rows);
   enableTilt($('#rows'), 3);
 }
@@ -255,6 +259,7 @@ function drawRows(all) {
     Vérifie-les (LinkedIn, recherche du nom) avant d’écrire.</span><button class="x" title="Masquer">×</button></div>` : '';
   const x = $('#banner .x'); if (x) x.onclick = () => { r.dismissedBanner = true; $('#banner').innerHTML = ''; };
 
+  const eb = $('#exportBtn'); if (eb) eb.textContent = r.sel.size ? `Exporter ${r.sel.size} sélectionné${r.sel.size > 1 ? 's' : ''}` : 'Exporter CSV';
   const el = $('#rows');
   if (!visible.length) {
     const hidden = all.length - visible.length;
@@ -274,6 +279,7 @@ function drawRows(all) {
     const reasons = (c.reasons || '').split(' | ').filter(Boolean);
     const src = c.source_url && c.source_url.startsWith('http') ? `<a href="${esc(c.source_url)}" target="_blank" rel="noopener">page source ↗</a>` : esc(c.source_url || '');
     return `<div class="item clickable ${open ? 'open' : ''}" data-row="${esc(c.email)}">
+      <input type="checkbox" class="pick" data-e="${esc(c.email)}" ${r.sel.has(c.email) ? 'checked' : ''} title="Sélectionner pour l’export" style="accent-color:var(--logo-to);width:16px;height:16px">
       <div class="mono ${CAT_FAMILY[c.category] || ''}" title="${esc(c.company_name || '')}">${esc(monogram(c.company_name))}</div>
       <div style="min-width:0"><div class="t">${esc(c.email)}${flags}</div>
         ${name || c.role_title ? `<div class="s">${name ? `<b>${esc(name)}</b>` : ''}${name && c.role_title ? ' — ' : ''}${esc((c.role_title || '').slice(0, 80))}</div>` : ''}</div>
@@ -284,8 +290,12 @@ function drawRows(all) {
     </div>`;
   }).join('');
 
+  $$('#rows input.pick').forEach(c => c.onchange = () => {
+    c.checked ? r.sel.add(c.dataset.e) : r.sel.delete(c.dataset.e);
+    const b = $('#exportBtn'); if (b) b.textContent = r.sel.size ? `Exporter ${r.sel.size} sélectionné${r.sel.size > 1 ? 's' : ''}` : 'Exporter CSV';
+  });
   $$('#rows .item').forEach(row => row.onclick = (e) => {
-    if (e.target.closest('button, select, a')) return;
+    if (e.target.closest('button, select, a, input')) return;
     const k = row.dataset.row; r.open.has(k) ? r.open.delete(k) : r.open.add(k); drawRows(all);
   });
   $$('[data-follow]').forEach(b => b.onclick = () => follow(all, b.dataset.follow, 'a_contacter'));

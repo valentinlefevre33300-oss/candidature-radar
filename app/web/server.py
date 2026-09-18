@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from dataclasses import asdict
 import json
 import logging
 import re
@@ -25,8 +26,9 @@ from .. import campaigns as engine
 from .. import auth, compose, db, geo, gmail
 from ..config import (APP_PASSWORD, APP_USER, BASE_URL, DAILY_CAP, DATA_DIR, DRY_RUN, MONTHLY_CAP,
                       PUBLIC_URL, REQUIRE_LOGIN)
-from ..models import SearchQuery
-from ..naf import catalogue, codes_for
+from ..models import Company, SearchQuery
+from ..naf import catalogue, codes_for, label_for_code, sector_for_code
+from ..sources.sirene import count_companies, search_companies
 from ..pipeline import run_search
 
 log = logging.getLogger(__name__)
@@ -142,6 +144,7 @@ class SearchPayload(BaseModel):
     limit: int = Field(default=30, ge=1, le=200)
     use_search_engine: bool = True
     verify_smtp: bool = False
+    companies: list[dict] = Field(default_factory=list)   # entreprises choisies à la main (étape « Les entreprises »)
 
 
 BACKGROUND: list[asyncio.Task] = []
@@ -264,20 +267,26 @@ async def start_search(payload: SearchPayload) -> dict:
         limit=payload.limit,
     )
 
+    picked = [Company.from_dict(c) for c in payload.companies if isinstance(c, dict) and c.get("siren")]
+    params = payload.model_dump()
+    if picked:   # on garde la trace des choix sans stocker les fiches entières
+        params["companies"] = [c.siren for c in picked]
+        query.limit = len(picked)
     run_id = db.start_run(
         job_title=query.job_title,
         sectors=",".join(payload.sectors),
         department=query.department or (str(cities[0].get("department") or "") or None if cities else None),
-        params=json.dumps(payload.model_dump(), ensure_ascii=False),
+        params=json.dumps(params, ensure_ascii=False),
     )
     job = Job(run_id)
     JOBS[run_id] = job
 
-    asyncio.create_task(_execute(job, query, payload))
+    asyncio.create_task(_execute(job, query, payload, picked or None))
     return {"run_id": run_id}
 
 
-async def _execute(job: Job, query: SearchQuery, payload: SearchPayload) -> None:
+async def _execute(job: Job, query: SearchQuery, payload: SearchPayload,
+                   picked: list[Company] | None = None) -> None:
     async def progress(event: dict) -> None:
         if event.get("event") == "etape" and event.get("total"):
             job.total = int(event["total"])
@@ -293,6 +302,7 @@ async def _execute(job: Job, query: SearchQuery, payload: SearchPayload) -> None
             use_search=payload.use_search_engine,
             verify_smtp=payload.verify_smtp,
             callback=progress,
+            companies=picked,
         )
         for company in companies:
             db.save_company(company)
@@ -356,6 +366,61 @@ async def export(run_id: int) -> FileResponse:
         raise HTTPException(status_code=404, detail="Aucun contact a exporter")
     path = db.export_csv(run_id)
     return FileResponse(path, filename=path.name, media_type="text/csv")
+
+
+class ExportPayload(BaseModel):
+    emails: list[str] = Field(default_factory=list)
+
+
+@app.post("/api/runs/{run_id}/export")
+async def export_selection(run_id: int, payload: ExportPayload) -> FileResponse:
+    """CSV des seules personnes cochées (toutes si la liste est vide)."""
+    wanted = {e.strip().lower() for e in payload.emails}
+    rows = [r for r in db.run_contacts(run_id) if not wanted or str(r.get("email", "")).lower() in wanted]
+    if not rows:
+        raise HTTPException(status_code=404, detail="Aucun contact a exporter")
+    path = db.export_csv(run_id, emails=sorted(wanted) or None)
+    return FileResponse(path, filename=path.name, media_type="text/csv")
+
+
+class ExplorePayload(BaseModel):
+    sectors: list[str] = Field(default_factory=list)
+    naf_codes: list[str] = Field(default_factory=list)
+    keywords: str = ""
+    cities: list[dict] = Field(default_factory=list)
+    agglomeration: bool = False
+    department: str | None = None
+    postal_code: str | None = None
+    min_headcount: int | None = None
+    max_headcount: int | None = None
+    limit: int = Field(default=100, ge=1, le=400)
+
+
+@app.post("/api/companies")
+async def explore_companies(payload: ExplorePayload) -> dict:
+    """Les entreprises de la cible, à choisir une par une avant d'explorer leurs sites."""
+    naf = codes_for(payload.sectors) + [c for c in payload.naf_codes if c]
+    if not naf and not payload.keywords.strip():
+        raise HTTPException(status_code=400, detail="Choisissez au moins un secteur.")
+    query = SearchQuery(
+        job_title="", keywords=payload.keywords.strip(),
+        department=(payload.department or "").strip() or None,
+        postal_code=(payload.postal_code or "").strip() or None,
+        cities=[c for c in payload.cities if c.get("code")], agglomeration=payload.agglomeration,
+        naf_codes=list(dict.fromkeys(naf)), min_headcount=payload.min_headcount,
+        max_headcount=payload.max_headcount, limit=payload.limit,
+    )
+    async with httpx.AsyncClient(follow_redirects=True) as client:
+        total, companies = await asyncio.gather(count_companies(client, query), search_companies(client, query))
+    _, reached = engine.already_reached()
+    rows = []
+    for company in companies:
+        row = asdict(company)
+        row["sector"] = sector_for_code(company.naf)
+        row["sector_label"] = label_for_code(company.naf)
+        row["reached"] = company.siren in reached
+        rows.append(row)
+    return {"total": total, "companies": rows}
 
 
 # ---------------------------------------------------------------- suivi ---

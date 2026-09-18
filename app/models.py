@@ -1,7 +1,7 @@
 """Structures de données partagées par tout le pipeline."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, asdict, fields
 from datetime import datetime, timezone
 from typing import Any
 
@@ -44,6 +44,16 @@ class Company:
     def slug_source(self) -> str:
         """Nom nettoyé des suffixes juridiques, utile pour deviner le domaine."""
         return self.name
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Company":
+        """Reconstruit une entreprise telle que l'interface la renvoie (choix à la main)."""
+        known = {f.name for f in fields(cls)}
+        raw = {k: v for k, v in data.items() if k in known and k != "directors"}
+        raw["directors"] = [Director(last_name=str(d.get("last_name") or ""), first_names=str(d.get("first_names") or ""),
+                                     role=d.get("role"))
+                            for d in (data.get("directors") or []) if isinstance(d, dict)]
+        return cls(**raw)
 
 
 @dataclass

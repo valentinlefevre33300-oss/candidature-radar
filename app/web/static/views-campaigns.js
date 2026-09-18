@@ -1,8 +1,8 @@
 /* Vues : tableau de bord des campagnes, assistant de création, page de campagne. */
 import { $, $$, esc, api, upload, state, toast, fmtDate, fmtDay, relTime, sectorLabel, monogram, pretty, pageHead,
          enableTilt, highlightVars, openModal, closeModal, linkedinSearch, queryParam, contactTags,
-         cityPicker, describeCities,
-         CATEGORY, CAT_FAMILY, APP_STATUS, CAMP_STATUS, HEADCOUNT } from './core.js';
+         cityPicker, describeCities, defaultZone, download, capName,
+         CATEGORY, CAT_FAMILY, SECTOR_FAMILY, APP_STATUS, CAMP_STATUS, HEADCOUNT } from './core.js';
 import { startSearch, headcountRange, renderProgress, updateProgress } from './views-search.js';
 
 const statCard = (k, v, d, tone = '') => `<div class="stat ${tone}"><div class="k">${k}</div><div class="v">${v}</div>${d ? `<div class="d">${d}</div>` : ''}</div>`;
@@ -74,7 +74,7 @@ export async function renderDashboard() {
 }
 
 /* ======================= assistant ======================= */
-const STEPS = ['Ta cible', 'Le marché', 'Les personnes', 'Ton CV', 'Ton mail', 'Récap'];
+const STEPS = ['Ta cible', 'Le marché', 'Les entreprises', 'Les personnes', 'Ton CV', 'Ton mail', 'Récap'];
 
 function wizardShell(step, inner, foot) {
   return `
@@ -92,8 +92,9 @@ export async function renderWizard() {
   const runId = queryParam('run');
   if (!state.wizard || (runId && state.wizard.runId !== +runId)) {
     const s = state.settings || {};
-    state.wizard = { step: 0, job: '', cities: [], agglo: false, head: 'pme', min: '', max: '', limit: 25, market: null, sectors: new Set(),
-                     showAll: false, runId: null, recipients: [], chosen: new Set(), excluded: {},
+    state.wizard = { step: 0, job: '', ...defaultZone(), head: 'pme', min: '', max: '', market: null, sectors: new Set(),
+                     showAll: false, companies: [], picked: new Set(), total: 0, cq: '', csec: 'all', loading: false,
+                     runId: null, recipients: [], chosen: new Set(), excluded: {},
                      cv: s.settings?.cv_path || '', cvName: s.cv_name || '',
                      subject: s.defaults?.subject || '', body: s.defaults?.body || '', personalize: !!s.claude, preview: null, busy: false };
     if (runId) {
@@ -107,7 +108,7 @@ export async function renderWizard() {
         w.cities = Array.isArray(p.cities) ? p.cities : [];
         w.agglo = !!p.agglomeration;
         w.sectors = new Set(p.sectors?.length ? p.sectors : (run.sectors || '').split(',').filter(Boolean));
-        w.runId = +runId; w.step = 2;
+        w.runId = +runId; w.step = 3;
         await loadRecipients();
       } catch (e) { toast(e.message); }
     }
@@ -120,6 +121,31 @@ async function loadRecipients() {
   const data = await api(`/api/runs/${w.runId}/recipients`);
   w.recipients = data.recipients; w.excluded = data.excluded;
   w.chosen = new Set(data.recipients.map(r => r.email));
+}
+
+async function loadCompanies(more) {
+  const w = state.wizard;
+  const btn = $('#wzNext');
+  if (!more && btn) { btn.disabled = true; btn.textContent = 'Recherche des entreprises…'; }
+  w.loading = true; if (more) drawWizard();
+  try {
+    const data = await api('/api/companies', { method: 'POST', body: JSON.stringify({
+      sectors: [...w.sectors], cities: w.cities, agglomeration: w.agglo,
+      limit: (more ? w.companies.length : 0) + 100, ...headcountRange(w.head, w.min, w.max) }) });
+    if (more) {
+      const seen = new Set(w.companies.map(c => c.siren));
+      const fresh = data.companies.filter(c => !seen.has(c.siren));
+      w.companies = [...w.companies, ...fresh]; fresh.forEach(c => w.picked.add(c.siren));
+    } else {
+      w.companies = data.companies; w.picked = new Set(data.companies.map(c => c.siren));
+      w.cq = ''; w.csec = 'all'; w.step = 2;
+    }
+    w.total = data.total;
+  } catch (e) {
+    toast(e.message);
+    if (!more && btn) { btn.disabled = false; btn.textContent = 'Voir les entreprises'; }
+  }
+  w.loading = false; drawWizard();
 }
 
 function drawWizard() {
@@ -137,12 +163,9 @@ function drawWizard() {
         <span class="lbl">Villes</span>
         <div id="wzCities"></div>
         <label class="check" style="margin-top:6px"><button type="button" class="switch ${w.agglo ? 'on' : ''}" id="wzAgglo"></button><span>Inclure toute l’agglomération <span class="muted">(Bordeaux → les 28 communes de la métropole)</span></span></label>
-        <div class="hint">Plusieurs villes possibles. Aucune = toute la France.</div>
+        <div class="hint">Bordeaux et sa métropole par défaut. Plusieurs villes possibles ; aucune = toute la France.</div>
       </div>
-      <div class="grid-3" style="grid-template-columns:1.6fr .8fr;margin-bottom:20px">
-        <div class="field"><span class="lbl">Taille</span><div class="pills on-paper" id="wzHead">${HEADCOUNT.filter(h => h.key !== 'custom').map(h => `<button class="pill ${w.head === h.key ? 'on' : ''}" data-k="${h.key}">${h.label}</button>`).join('')}</div></div>
-        <div class="field"><label class="lbl">Explorer</label><select class="input" id="wzLimit">${[25, 50, 100].map(n => `<option ${w.limit === n ? 'selected' : ''}>${n}</option>`).join('')}</select><div class="hint">entreprises</div></div>
-      </div>`;
+      <div class="field" style="margin-bottom:20px"><span class="lbl">Taille</span><div class="pills on-paper" id="wzHead">${HEADCOUNT.filter(h => h.key !== 'custom').map(h => `<button class="pill ${w.head === h.key ? 'on' : ''}" data-k="${h.key}">${h.label}</button>`).join('')}</div></div>`;
     foot = `<button class="btn btn-accent btn-lg btn-block" id="wzNext">Analyser le marché</button><span class="hint" id="wzHint"></span>`;
   }
 
@@ -153,16 +176,50 @@ function drawWizard() {
     inner = `
       <p class="kicker">D’après ta cible · ${esc(w.job)} · ${esc(describeCities(w.cities, w.agglo))}</p>
       <h1>${total.toLocaleString('fr-FR')} entreprises ciblées<span class="dot-accent">.</span></h1>
-      <div class="sub" style="color:var(--muted);margin:10px 0 24px">Tout est inclus par défaut. Retire ce que tu veux, le total se met à jour. On explorera les <b style="color:var(--ink)">${w.limit}</b> premières pour trouver à qui écrire.</div>
+      <div class="sub" style="color:var(--muted);margin:10px 0 24px">Tout est inclus par défaut. Retire ce que tu veux, le total se met à jour. À l’étape suivante, tu choisis les entreprises une par une.</div>
       <div class="card-white" id="wzSectors">
         ${shown.map(r => `<div class="sector-row"><span class="nm">${esc(r.label.split(' / ')[0])}</span><span class="ct">${r.count.toLocaleString('fr-FR')}</span>
           <span class="muted" style="font-size:12px;font-weight:600">${w.sectors.has(r.key) ? 'Inclus' : 'Exclu'}</span><button class="switch ${w.sectors.has(r.key) ? 'on' : ''}" data-k="${r.key}" aria-label="inclure"></button></div>`).join('')}
         ${rows.length > 6 ? `<div class="sector-row"><button class="btn btn-text btn-sm" id="wzMore">${w.showAll ? 'Réduire' : `Voir les ${rows.length - 6} autres secteurs`}</button></div>` : ''}
       </div>`;
-    foot = `<button class="btn btn-accent btn-lg btn-block" id="wzNext" ${w.sectors.size ? '' : 'disabled'}>Trouver les interlocuteurs</button><span class="hint">Explore les sites des entreprises et en extrait les contacts. Une à deux minutes.</span>`;
+    foot = `<button class="btn btn-accent btn-lg btn-block" id="wzNext" ${w.sectors.size ? '' : 'disabled'}>Voir les entreprises</button><span class="hint">La liste des entreprises de ta cible, à trier à la main.</span>`;
   }
 
   if (step === 2) {
+    const all = w.companies, q = w.cq.trim().toLowerCase();
+    const directors = (c) => (c.directors || []).map(d => capName(`${d.first_names} ${d.last_name}`.trim()));
+    const visible = all.filter(c => (w.csec === 'all' || c.sector === w.csec) &&
+      (!q || `${c.name} ${c.city || ''} ${c.sector_label || ''} ${directors(c).join(' ')}`.toLowerCase().includes(q)));
+    const n = w.picked.size;
+    const secs = [...w.sectors].filter(k => all.some(c => c.sector === k));
+    inner = `
+      <p class="kicker">Sur mesure · ${esc(describeCities(w.cities, w.agglo))}</p>
+      <h1>${n} entreprise${n > 1 ? 's' : ''} retenue${n > 1 ? 's' : ''}<span class="dot-accent">.</span></h1>
+      <div class="sub" style="color:var(--muted);margin:10px 0 18px">${all.length} affichée${all.length > 1 ? 's' : ''} sur ${w.total.toLocaleString('fr-FR')} dans ta cible. Coche celles qui t’intéressent : on n’explorera que celles-là.</div>
+      <div class="toolbar" style="margin-bottom:10px">
+        <div class="pills on-paper" id="wzSecSeg"><button class="pill ${w.csec === 'all' ? 'on' : ''}" data-k="all">Tous</button>${secs.map(k => `<button class="pill ${w.csec === k ? 'on' : ''}" data-k="${k}">${esc(sectorLabel(k))}</button>`).join('')}</div>
+        <span class="grow"></span>
+        <input class="input" id="wzCq" placeholder="Filtrer : nom, ville, dirigeant…" value="${esc(w.cq)}" style="max-width:260px">
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+        <button class="btn btn-white btn-sm" id="wzAll">Tout cocher (${visible.length})</button>
+        <button class="btn btn-white btn-sm" id="wzNone" ${n ? '' : 'disabled'}>Tout décocher (${n})</button>
+        ${all.length < w.total ? `<button class="btn btn-white btn-sm" id="wzMoreCo" ${w.loading ? 'disabled' : ''}>${w.loading ? 'Chargement…' : `Charger ${Math.min(100, w.total - all.length)} de plus`}</button>` : ''}
+        <span class="hint">${visible.length} visible${visible.length > 1 ? 's' : ''}</span>
+      </div>
+      <div class="list firms card-white" style="padding:8px" id="wzFirms">
+        ${visible.length ? visible.map(c => { const d = directors(c); return `<div class="item"><input type="checkbox" data-s="${esc(c.siren)}" ${w.picked.has(c.siren) ? 'checked' : ''} style="accent-color:var(--logo-to);width:16px;height:16px">
+            <div class="mono sm ${SECTOR_FAMILY[c.sector] || ''}">${esc(monogram(c.name))}</div>
+            <div style="min-width:0"><div class="t" style="font-size:14px">${esc(pretty(c.name))}${c.reached ? ' <span class="tag plain">déjà contactée</span>' : ''}</div>
+              <div class="s">${esc([c.sector_label, c.created_at ? `créée en ${String(c.created_at).slice(0, 4)}` : ''].filter(Boolean).join(' · '))}</div></div>
+            <div class="meta" style="text-align:left"><b>${esc(c.city || '')}</b>${esc(c.size || '')}</div>
+            <div class="meta" style="text-align:left">${d.length ? `<b>${d.length} dirigeant${d.length > 1 ? 's' : ''}</b>${esc(d.slice(0, 2).join(', '))}${d.length > 2 ? '…' : ''}` : '<span class="muted">dirigeants non publiés</span>'}</div>
+          </div>`; }).join('') : '<div class="empty">Aucune entreprise ne correspond à ce filtre.</div>'}
+      </div>`;
+    foot = `<button class="btn btn-accent btn-lg btn-block" id="wzNext" ${n ? '' : 'disabled'}>Trouver les interlocuteurs de ${n} entreprise${n > 1 ? 's' : ''}</button><span class="hint">Explore les sites des entreprises cochées et en extrait les contacts. Compte quelques secondes par entreprise.</span>`;
+  }
+
+  if (step === 3) {
     const n = w.chosen.size, ex = w.excluded || {};
     const exTxt = [ex.deja_contactes ? `${ex.deja_contactes} déjà contactée${ex.deja_contactes > 1 ? 's' : ''}` : '',
                    ex.score_faible ? `${ex.score_faible} peu pertinent${ex.score_faible > 1 ? 's' : ''}` : '',
@@ -174,6 +231,7 @@ function drawWizard() {
       <div class="sub" style="color:var(--muted);margin:10px 0 18px">Décoche celles que tu ne veux pas. ${exTxt ? `<span class="tag plain" style="margin-left:0">écartés : ${esc(exTxt)}</span>` : ''}</div>
       ${w.recipients.length ? '' : '<div class="banner"><span>Aucun contact exploitable dans cette recherche. Reviens en arrière pour élargir la cible.</span></div>'}
       ${w.recipients.length ? `<div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap">
+        <button class="btn btn-white btn-sm" id="wzExport">⬇ Exporter la sélection (CSV)</button>
         <button class="btn btn-white btn-sm" id="wzBriefs" ${state.settings?.claude ? '' : 'disabled'}>🔎 Analyser les enjeux des entreprises</button>
         <span class="hint">${state.settings?.claude ? 'Claude lit le site de chaque entreprise et résume activité et enjeux — à relire avant d’écrire.' : 'Clé Claude absente : analyse indisponible.'}</span></div>` : ''}
       <div class="list recip card-white" style="padding:8px" id="wzRecip">
@@ -189,7 +247,7 @@ function drawWizard() {
     foot = `<button class="btn btn-accent btn-lg btn-block" id="wzNext" ${n ? '' : 'disabled'}>Continuer avec ${n} destinataire${n > 1 ? 's' : ''}</button>`;
   }
 
-  if (step === 3) {
+  if (step === 4) {
     inner = `
       <h1>Quel CV veux-tu envoyer<span class="dot-accent">?</span></h1>
       <div class="sub" style="color:var(--muted);margin:10px 0 24px">Il part en pièce jointe de chaque mail. Tu pourras le changer dans les réglages.</div>
@@ -202,7 +260,7 @@ function drawWizard() {
             <button class="btn btn-text" id="wzSkipCv">Continuer sans CV</button>`;
   }
 
-  if (step === 4) {
+  if (step === 5) {
     const s = state.settings || {};
     const first = w.recipients.find(r => w.chosen.has(r.email));
     inner = `
@@ -221,7 +279,7 @@ function drawWizard() {
     foot = `<button class="btn btn-accent btn-lg btn-block" id="wzNext">Utiliser ce modèle</button><span class="hint">🔒 Réécrit pour chaque entreprise, avec ton nom et ton poste.</span>`;
   }
 
-  if (step === 5) {
+  if (step === 6) {
     const s = state.settings || {};
     const gmail = s.gmail || {};
     const sim = s.dry_run;
@@ -256,7 +314,6 @@ function bindWizard() {
     $('#wzJob').oninput = e => w.job = e.target.value;
     cityPicker($('#wzCities'), w.cities, () => {});
     $('#wzAgglo').onclick = () => { w.agglo = !w.agglo; $('#wzAgglo').classList.toggle('on', w.agglo); };
-    $('#wzLimit').onchange = e => w.limit = +e.target.value;
     $$('#wzHead .pill').forEach(b => b.onclick = () => { w.head = b.dataset.k; $$('#wzHead .pill').forEach(x => x.classList.toggle('on', x === b)); });
     $('#wzNext').onclick = async () => {
       if (!w.job.trim()) { $('#wzJob').classList.add('err'); $('#wzJob').focus(); return; }
@@ -272,26 +329,51 @@ function bindWizard() {
   if (w.step === 1) {
     $$('#wzSectors .switch').forEach(b => b.onclick = () => { const k = b.dataset.k; w.sectors.has(k) ? w.sectors.delete(k) : w.sectors.add(k); drawWizard(); });
     const more = $('#wzMore'); if (more) more.onclick = () => { w.showAll = !w.showAll; drawWizard(); };
+    $('#wzNext').onclick = () => loadCompanies(false);
+  }
+
+  if (w.step === 2) {
+    $$('#wzSecSeg .pill').forEach(b => b.onclick = () => { w.csec = b.dataset.k; drawWizard(); });
+    const cq = $('#wzCq');
+    cq.oninput = () => { w.cq = cq.value; const pos = cq.selectionStart; drawWizard(); const el = $('#wzCq'); el.focus(); el.setSelectionRange(pos, pos); };
+    const visible = () => $$('#wzFirms input[type=checkbox]').map(c => c.dataset.s);
+    $('#wzAll').onclick = () => { visible().forEach(x => w.picked.add(x)); drawWizard(); };
+    $('#wzNone').onclick = () => { w.picked.clear(); drawWizard(); };
+    const more = $('#wzMoreCo'); if (more) more.onclick = () => loadCompanies(true);
+    $$('#wzFirms input[type=checkbox]').forEach(c => c.onchange = () => {
+      c.checked ? w.picked.add(c.dataset.s) : w.picked.delete(c.dataset.s);
+      const n = w.picked.size; const b = $('#wzNext'); b.disabled = !n;
+      b.textContent = `Trouver les interlocuteurs de ${n} entreprise${n > 1 ? 's' : ''}`;
+      $('h1').innerHTML = `${n} entreprise${n > 1 ? 's' : ''} retenue${n > 1 ? 's' : ''}<span class="dot-accent">.</span>`;
+    });
     $('#wzNext').onclick = async () => {
-      const payload = { job_title: w.job.trim(), sectors: [...w.sectors], cities: w.cities, agglomeration: w.agglo, limit: w.limit,
-                        use_search_engine: true, verify_smtp: false, ...headcountRange(w.head, w.min, w.max) };
+      const companies = w.companies.filter(c => w.picked.has(c.siren));
+      if (!companies.length) return;
+      const payload = { job_title: w.job.trim(), sectors: [...w.sectors], cities: w.cities, agglomeration: w.agglo,
+                        limit: Math.min(200, companies.length), companies, use_search_engine: true, verify_smtp: false,
+                        ...headcountRange(w.head, w.min, w.max) };
       try {
         await startSearch(payload, async (runId) => {
           w.runId = runId;
           try { await loadRecipients(); } catch (e) { toast(e.message); }
-          w.step = 2; drawWizard();
+          w.step = 3; drawWizard();
         });
         const body = $('.wizard-body'); body.innerHTML = '<div class="card"><div class="card-body" id="wzProgress"></div></div>';
         $('.wizard-foot').innerHTML = '';
         renderProgress($('#wzProgress'));
       } catch (e) { toast(e.message); }
     };
+    enableTilt($('#wzFirms'), 2);
   }
 
-  if (w.step === 2) {
+  if (w.step === 3) {
     $$('#wzRecip input[type=checkbox]').forEach(c => c.onchange = () => { c.checked ? w.chosen.add(c.dataset.e) : w.chosen.delete(c.dataset.e);
       const n = w.chosen.size; const b = $('#wzNext'); b.disabled = !n; b.textContent = `Continuer avec ${n} destinataire${n > 1 ? 's' : ''}`; $('h1').innerHTML = `${n} personne${n > 1 ? 's' : ''} à qui écrire<span class="dot-accent">.</span>`; });
-    $('#wzNext').onclick = () => { w.step = 3; drawWizard(); };
+    $('#wzNext').onclick = () => { w.step = 4; drawWizard(); };
+    const exp = $('#wzExport'); if (exp) exp.onclick = () => {
+      if (!w.chosen.size) { toast('Coche au moins une personne'); return; }
+      download(`/api/runs/${w.runId}/export`, { emails: [...w.chosen] }, `contacts-${w.runId}.csv`).catch(e => toast(e.message));
+    };
     const briefs = $('#wzBriefs'); if (briefs) briefs.onclick = async () => {
       const todo = w.recipients.filter(r => !r.company_brief).length;
       briefs.disabled = true; briefs.textContent = `Analyse en cours… (${todo} entreprise${todo > 1 ? 's' : ''})`;
@@ -305,18 +387,18 @@ function bindWizard() {
     enableTilt($('#wzRecip'), 2);
   }
 
-  if (w.step === 3) {
+  if (w.step === 4) {
     $('#wzCv').onchange = async (e) => {
       const file = e.target.files[0]; if (!file) return;
       const fd = new FormData(); fd.append('file', file);
       try { const r = await upload('/api/settings/cv', fd); w.cvName = r.cv_name; state.settings = null; toast('CV importé'); drawWizard(); }
       catch (err) { toast(err.message); }
     };
-    $('#wzNext').onclick = () => { w.step = 4; drawWizard(); };
-    $('#wzSkipCv').onclick = () => { w.cvName = ''; w.step = 4; drawWizard(); };
+    $('#wzNext').onclick = () => { w.step = 5; drawWizard(); };
+    $('#wzSkipCv').onclick = () => { w.cvName = ''; w.step = 5; drawWizard(); };
   }
 
-  if (w.step === 4) {
+  if (w.step === 5) {
     $('#wzSubject').oninput = e => w.subject = e.target.value;
     $('#wzBody').oninput = e => w.body = e.target.value;
     $$('[data-var]').forEach(b => b.onclick = () => { const ta = $('#wzBody'); const v = `{${b.dataset.var}}`;
@@ -330,10 +412,10 @@ function bindWizard() {
       } catch (e) { toast(e.message); }
       drawWizard();
     };
-    $('#wzNext').onclick = () => { w.step = 5; drawWizard(); };
+    $('#wzNext').onclick = () => { w.step = 6; drawWizard(); };
   }
 
-  if (w.step === 5) {
+  if (w.step === 6) {
     const create = async () => api('/api/campaigns', { method: 'POST', body: JSON.stringify({
       name: w.job.trim(), job_title: w.job.trim(), zone: w.cities.length ? describeCities(w.cities, w.agglo) : null, sectors: [...w.sectors], run_id: w.runId,
       recipients: [...w.chosen], subject_tpl: w.subject, body_tpl: w.body, personalize: w.personalize }) });

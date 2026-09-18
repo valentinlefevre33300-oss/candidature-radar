@@ -110,6 +110,16 @@ def catalogue() -> list[dict[str, object]]:
     return [{"key": k, "label": v["label"], "codes": v["codes"]} for k, v in SECTORS.items()]
 
 
+def sector_for_code(code: str | None) -> str | None:
+    """Clé du premier secteur qui contient ce code NAF."""
+    if not code:
+        return None
+    for key, value in SECTORS.items():
+        if code in value["codes"]:
+            return key
+    return None
+
+
 def label_for_code(code: str | None) -> str | None:
     """Libellé lisible du premier secteur qui contient ce code NAF."""
     if not code:

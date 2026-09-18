@@ -434,9 +434,12 @@ EXPORT_COLUMNS = [
 ]
 
 
-def export_csv(run_id: int) -> Path:
-    """Écrit le CSV d'une exécution et renvoie son chemin."""
+def export_csv(run_id: int, emails: list[str] | None = None) -> Path:
+    """Écrit le CSV d'une exécution (ou d'une sélection d'adresses) et renvoie son chemin."""
     rows = run_contacts(run_id)
+    if emails:
+        wanted = {e.strip().lower() for e in emails}
+        rows = [r for r in rows if str(r.get("email", "")).lower() in wanted]
     EXPORT_DIR.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     path = EXPORT_DIR / f"contacts-run{run_id}-{stamp}.csv"

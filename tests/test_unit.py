@@ -390,6 +390,21 @@ check(all(e == e.lower() for e in _allowed), "liste d'acces en minuscules")
 check(not _auth.is_allowed("") and not _auth.is_allowed(None), "adresse vide jamais autorisee")
 
 # --------------------------------------------------------------------------
+print("\n# Choix des entreprises a la main")
+from app.naf import sector_for_code, label_for_code
+from app.models import Company as _Co
+check(sector_for_code("62.01Z") == "tech", "62.01Z -> secteur tech")
+check(sector_for_code(None) is None and sector_for_code("00.00Z") is None, "code inconnu -> pas de secteur")
+check(label_for_code("62.01Z") == "Tech", "libelle court du secteur")
+_raw = {"siren": "123456789", "name": "ACME SAS", "naf": "62.01Z", "city": "Bordeaux", "size": "10 a 19",
+        "directors": [{"last_name": "DUPONT", "first_names": "MARIE", "role": "President"}, "bruit"],
+        "sector": "tech", "sector_label": "Tech", "reached": False}
+_co = _Co.from_dict(_raw)
+check(_co.siren == "123456789" and _co.city == "Bordeaux", "entreprise reconstruite depuis l'interface")
+check(len(_co.directors) == 1 and _co.directors[0].display == "Marie Dupont", "dirigeants reconstruits, bruit ignore")
+check(not hasattr(_co, "sector_label"), "les champs d'affichage ne polluent pas le modele")
+
+# --------------------------------------------------------------------------
 print("\n" + "=" * 62)
 if FAILURES:
     print(f"{len(FAILURES)} ECHEC(S) :")

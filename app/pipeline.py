@@ -315,14 +315,22 @@ async def process_company(fetcher: PoliteFetcher, client: httpx.AsyncClient,
 async def run_search(query: SearchQuery, *, use_search: bool = True,
                      verify_smtp: bool = SMTP_PROBE,
                      callback: ProgressCallback = None,
+                     companies: list[Company] | None = None,
                      ) -> tuple[list[Company], list[Contact]]:
-    """Execute la recherche complete et renvoie (entreprises, contacts classes)."""
+    """Execute la recherche complete et renvoie (entreprises, contacts classes).
+
+    `companies` : entreprises choisies a la main dans l'interface ; l'annuaire
+    n'est alors pas interroge, on explore exactement celles-la.
+    """
     async with build_client() as client:
         fetcher = PoliteFetcher(client)
 
-        await _emit(callback, event="etape",
-                    step="interrogation de l'annuaire des entreprises")
-        companies = await search_companies(client, query)
+        if companies is None:
+            await _emit(callback, event="etape",
+                        step="interrogation de l'annuaire des entreprises")
+            companies = await search_companies(client, query)
+        else:
+            companies = list(companies)
         await _emit(callback, event="etape",
                     step=f"{len(companies)} entreprise(s) a explorer",
                     total=len(companies))
