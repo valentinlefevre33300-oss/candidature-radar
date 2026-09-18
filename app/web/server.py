@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 from dataclasses import asdict
 import json
 import logging
@@ -35,6 +36,24 @@ from ..pipeline import run_search
 log = logging.getLogger(__name__)
 
 STATIC = Path(__file__).parent / "static"
+
+
+def _static_version() -> str:
+    """Empreinte du contenu de l'interface : change à chaque modification.
+
+    Les fichiers sont servis sous /s/<empreinte>/… ; une nouvelle version a
+    donc de nouvelles adresses, et aucune copie gardée par un navigateur ou un
+    cache intermédiaire ne peut être resservie à sa place.
+    """
+    digest = hashlib.sha1()
+    for path in sorted(STATIC.rglob("*")):
+        if path.is_file():
+            digest.update(path.relative_to(STATIC).as_posix().encode())
+            digest.update(path.read_bytes())
+    return digest.hexdigest()[:10]
+
+
+STATIC_VERSION = _static_version()
 
 app = FastAPI(title="Candidature Radar", docs_url="/api/docs")
 
@@ -117,7 +136,7 @@ async def _revalidate_static(request, call_next):
     """
     response = await call_next(request)
     path = request.url.path
-    if path == "/" or path == "/login" or path.startswith("/static/"):
+    if path == "/" or path == "/login" or path.startswith(("/static/", "/s/")):
         response.headers["Cache-Control"] = "private, no-store, max-age=0"
         response.headers["CDN-Cache-Control"] = "no-store"
     return response
@@ -175,7 +194,8 @@ async def _shutdown() -> None:
 
 @app.get("/", response_class=HTMLResponse)
 async def index() -> HTMLResponse:
-    return HTMLResponse((STATIC / "index.html").read_text(encoding="utf-8"))
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    return HTMLResponse(html.replace("/static/", f"/s/{STATIC_VERSION}/"))
 
 
 
@@ -959,4 +979,5 @@ async def tracking_pixel(token: str) -> Response:
                              "Pragma": "no-cache", "Expires": "0"})
 
 
-app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
+app.mount(f"/s/{STATIC_VERSION}", StaticFiles(directory=str(STATIC)), name="static")
+app.mount("/static", StaticFiles(directory=str(STATIC)), name="static_plain")   # anciennes adresses
