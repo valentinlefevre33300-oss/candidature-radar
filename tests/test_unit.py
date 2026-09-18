@@ -477,6 +477,10 @@ check(min_headcount_for("Product owner") == 10, "product owner : 10 salaries au 
 check(min_headcount_for("developpeur python") == 3, "developpeur : 3 salaries au moins")
 check(min_headcount_for("plombier") == 1, "poste sans avis : pas de plancher")
 check(max(0, min_headcount_for("Product owner")) == 10 and max(20, min_headcount_for("Product owner")) == 20, "le plancher ne rabaisse jamais un minimum plus haut")
+from app.naf import apply_floor
+check(apply_floor(1, 9, "Product owner") == (10, None), "1-9 pour un PO : devient 10 et plus, jamais un filtre vide")
+check(apply_floor(10, 249, "Product owner") == (10, 249) and apply_floor(None, None, "Product owner") == (10, None), "fourchettes compatibles conservees")
+check(apply_floor(1, 9, "plombier") == (1, 9), "sans plancher : rien ne change")
 
 # --------------------------------------------------------------------------
 print("\n" + "=" * 62)

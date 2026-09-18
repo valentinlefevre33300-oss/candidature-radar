@@ -357,10 +357,11 @@ function bindWizard() {
     const add = $('#wzAddCo'), drop = $('#wzAddDrop'); let addTimer;
     add.oninput = () => { w.addq = add.value; clearTimeout(addTimer); const q = add.value.trim(); if (q.length < 3) { drop.classList.add('hidden'); return; }
       addTimer = setTimeout(async () => {
-        let found = [];
-        try { found = (await api('/api/companies', { method: 'POST', body: JSON.stringify({ job_title: w.job.trim(), keywords: q, cities: w.cities, agglomeration: w.agglo, limit: 8, ...headcountRange(w.head, w.min, w.max) }) })).companies; } catch (e) { toast(e.message); }
+        let found = [], outside = false;
+        const lookup = (anywhere) => api('/api/companies', { method: 'POST', body: JSON.stringify({ job_title: w.job.trim(), keywords: q, cities: w.cities, agglomeration: w.agglo, anywhere, limit: 8, ...headcountRange(w.head, w.min, w.max) }) });
+        try { found = (await lookup(false)).companies; if (!found.length) { found = (await lookup(true)).companies; outside = found.length > 0; } } catch (e) { toast(e.message); }
         const known = new Set(w.companies.map(c => c.siren));
-        drop.innerHTML = found.length ? found.map(c => `<div class="opt" data-s="${esc(c.siren)}"><b>${esc(pretty(c.name))}</b> <span class="muted">${esc([c.city, c.size, c.sector_label].filter(Boolean).join(' · '))}${known.has(c.siren) ? ' · déjà dans la liste' : ''}</span></div>`).join('')
+        drop.innerHTML = found.length ? found.map(c => `<div class="opt" data-s="${esc(c.siren)}"><b>${esc(pretty(c.name))}</b> <span class="muted">${esc([c.city, c.size, c.sector_label].filter(Boolean).join(' · '))}${known.has(c.siren) ? ' · déjà dans la liste' : ''}${outside ? ' · <b>hors zone</b>' : ''}</span></div>`).join('')
           : '<div class="opt muted">Aucune entreprise de ce nom dans la zone (avec l’effectif requis).</div>';
         drop.classList.remove('hidden');
         $$('#wzAddDrop .opt[data-s]').forEach(o => o.onclick = () => { const c = found.find(x => x.siren === o.dataset.s); if (!c) return;

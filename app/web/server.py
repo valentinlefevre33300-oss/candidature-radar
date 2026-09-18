@@ -28,7 +28,7 @@ from .. import auth, compose, db, geo, gmail
 from ..config import (APP_PASSWORD, APP_USER, BASE_URL, DAILY_CAP, DATA_DIR, DRY_RUN, MONTHLY_CAP,
                       PUBLIC_URL, REQUIRE_LOGIN)
 from ..models import Company, SearchQuery
-from ..naf import DOMAIN_MIN_HEADCOUNT, catalogue, codes_for, label_for_code, min_headcount_for, sector_for_code
+from ..naf import DOMAIN_MIN_HEADCOUNT, apply_floor, catalogue, codes_for, label_for_code, min_headcount_for, sector_for_code
 from ..sources.sirene import count_companies, search_companies
 from ..resolve import linkedin as linkedin_lookup
 from ..pipeline import run_search
@@ -283,7 +283,7 @@ async def start_search(payload: SearchPayload) -> dict:
         )
 
     cities = [c for c in payload.cities if c.get("code")]
-    floor = min_headcount_for(payload.job_title)   # un product owner n'existe pas sous 10 salariés
+    lo, hi = apply_floor(payload.min_headcount, payload.max_headcount, payload.job_title)   # un PO n'existe pas sous 10 salariés
     query = SearchQuery(
         job_title=payload.job_title.strip(),
         keywords=payload.keywords.strip(),
@@ -292,8 +292,8 @@ async def start_search(payload: SearchPayload) -> dict:
         cities=cities,
         agglomeration=payload.agglomeration,
         naf_codes=list(dict.fromkeys(naf)),
-        min_headcount=max(payload.min_headcount or 0, floor) or None,
-        max_headcount=payload.max_headcount,
+        min_headcount=lo,
+        max_headcount=hi,
         limit=payload.limit,
     )
 
@@ -438,6 +438,7 @@ async def find_linkedin(run_id: int, payload: LinkedinPayload) -> dict:
 
 class ExplorePayload(BaseModel):
     job_title: str = ""
+    anywhere: bool = False      # recherche par nom : ignorer la zone (siège déclaré ailleurs)
     sectors: list[str] = Field(default_factory=list)
     naf_codes: list[str] = Field(default_factory=list)
     keywords: str = ""
@@ -460,10 +461,14 @@ async def explore_companies(payload: ExplorePayload) -> dict:
         job_title="", keywords=payload.keywords.strip(),
         department=(payload.department or "").strip() or None,
         postal_code=(payload.postal_code or "").strip() or None,
-        cities=[c for c in payload.cities if c.get("code")], agglomeration=payload.agglomeration,
+        cities=[] if payload.anywhere else [c for c in payload.cities if c.get("code")],
+        agglomeration=payload.agglomeration and not payload.anywhere,
         naf_codes=list(dict.fromkeys(naf)),
-        min_headcount=max(payload.min_headcount or 0, min_headcount_for(payload.job_title)) or None,
-        max_headcount=payload.max_headcount, limit=payload.limit,
+        # Recherche par nom : on connaît l'entreprise, on ne filtre pas l'effectif —
+        # beaucoup de sociétés (Betclic…) ne le déclarent pas et seraient invisibles.
+        min_headcount=None if payload.keywords.strip() else apply_floor(payload.min_headcount, payload.max_headcount, payload.job_title)[0],
+        max_headcount=None if payload.keywords.strip() else apply_floor(payload.min_headcount, payload.max_headcount, payload.job_title)[1],
+        limit=payload.limit,
     )
     async with httpx.AsyncClient(follow_redirects=True) as client:
         total, companies = await asyncio.gather(count_companies(client, query), search_companies(client, query))

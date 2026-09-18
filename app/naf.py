@@ -120,6 +120,19 @@ def min_headcount_for(job_title: str) -> int:
     return DOMAIN_MIN_HEADCOUNT.get(job_domain(job_title or "") or "", 1)
 
 
+def apply_floor(min_h: int | None, max_h: int | None, job_title: str) -> tuple[int | None, int | None]:
+    """Applique le plancher du poste à une fourchette d'effectif.
+
+    Une fourchette entièrement sous le plancher (« 1–9 » pour un product owner)
+    devient « à partir du plancher » : sans ça, minimum > maximum annulait tout
+    filtre et ramenait les cent mille micro-entreprises.
+    """
+    floor = min_headcount_for(job_title)
+    lo = max(min_h or 0, floor) or None
+    hi = None if (max_h is not None and lo is not None and max_h < lo) else max_h
+    return lo, hi
+
+
 def relevant_sectors(job_title: str) -> list[str] | None:
     """Les secteurs à présélectionner pour ce poste ; None = pas d'avis (tout)."""
     from .domains import job_domain   # import tardif : domains importe naf

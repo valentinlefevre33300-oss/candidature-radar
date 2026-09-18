@@ -22,7 +22,7 @@ import httpx
 
 from . import compose, db, gmail
 from .config import DAILY_CAP, DRY_RUN, MONTHLY_CAP, SEND_INTERVAL
-from .naf import SECTORS, codes_for, min_headcount_for, relevant_sectors
+from .naf import SECTORS, apply_floor, codes_for, min_headcount_for, relevant_sectors
 from .models import SearchQuery
 from .sources.sirene import count_companies
 
@@ -705,8 +705,7 @@ async def market(cities: list[dict], agglomeration: bool, zone: str | None,
     Chaque ligne dit aussi si le secteur est pertinent pour le poste visé.
     """
     wanted = relevant_sectors(job_title)
-    floor = min_headcount_for(job_title)
-    min_headcount = max(min_headcount or 0, floor) or None
+    min_headcount, max_headcount = apply_floor(min_headcount, max_headcount, job_title)
     department = zone if zone and len(zone) <= 3 and not cities else None
     postal = zone if zone and len(zone) == 5 and not cities else None
     semaphore = asyncio.Semaphore(4)
