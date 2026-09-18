@@ -23,7 +23,7 @@ from bs4 import BeautifulSoup
 from .config import GLOBAL_CONCURRENCY, MAX_PAGES_PER_SITE, SMTP_PROBE
 from .crawl.fetcher import PoliteFetcher, build_client
 from .crawl.spider import crawl_site, is_about_page, page_main_text, page_tagline
-from .domains import classify_role, is_manager, job_domain
+from .domains import ADJACENT, company_fit, find_evidence, classify_role, is_manager, job_domain
 from .extract.emails import extract_emails
 from .extract.team import extract_people
 from .resolve import linkedin
@@ -259,6 +259,7 @@ async def process_company(fetcher: PoliteFetcher, client: httpx.AsyncClient,
     people: list[tuple[str, str, str, str]] = []   # (prenom, nom, fonction, page)
     profile_links: list[str] = []                   # profils LinkedIn lies depuis le site
     about_parts: list[str] = []
+    evidence: list[str] = []                        # intitulés du métier relevés sur le site
     for index, (url, html) in enumerate(pages):
         soup = BeautifulSoup(html, "lxml")
         if index == 0:
@@ -274,6 +275,12 @@ async def process_company(fetcher: PoliteFetcher, client: httpx.AsyncClient,
         for first, last, role in extract_people(soup, company.name):
             people.append((first, last, role, url))
         profile_links.extend(u for u in linkedin.profile_links(soup) if u not in profile_links)
+        if domain and len(evidence) < 8:
+            body = BeautifulSoup(html, "lxml")
+            for tag in body(["script", "style", "noscript"]):
+                tag.decompose()
+            evidence.extend(t for t in find_evidence(body.get_text(" ", strip=True), domain)
+                            if t not in evidence)
         emails = extract_emails(soup, html)
         if not emails:
             continue
@@ -289,6 +296,21 @@ async def process_company(fetcher: PoliteFetcher, client: httpx.AsyncClient,
                 + _infer_director_emails(company, observed, domain, pattern, guessed)
                 + _infer_people_emails(company, observed, people, domain, pattern, guessed))
     linkedin.attach(contacts, profile_links)   # profils liés depuis le site, portant le nom
+
+    # Preuve de métier : des personnes de l'équipe qui exercent ou dirigent le métier
+    # visé (ou un métier voisin), et les intitulés relevés dans les pages.
+    exact = sum(1 for c in contacts if c.category == "metier")
+    seen_people = {(c.first_name or "", c.last_name or "") for c in contacts}
+    adjacent = 0
+    for first, last, role, _url in people:
+        if (first, last) in seen_people:
+            continue
+        if classify_role(role, domain)[0] == "metier":
+            exact += 1
+        elif any(classify_role(role, adj)[0] == "metier" for adj in ADJACENT.get(domain or "", [])):
+            adjacent += 1
+    company.fit = company_fit(exact, adjacent, evidence)
+    company.fit_terms = ", ".join(evidence[:6]) or None
 
     # Verification MX : une seule resolution par domaine, partagee.
     domains = {c.domain for c in contacts}
@@ -311,8 +333,9 @@ async def process_company(fetcher: PoliteFetcher, client: httpx.AsyncClient,
         score_contact(contact, company, query.job_title)
 
     await _emit(callback, event="entreprise", name=company.name,
-                step=f"{len(contacts)} contact(s)", contacts=len(contacts),
-                domain=company.domain)
+                step=f"{len(contacts)} contact(s)" + (f" · métier repéré : {company.fit_terms}" if company.fit_terms
+                                                       else " · aucune trace du métier"),
+                contacts=len(contacts), domain=company.domain, fit=company.fit)
     return contacts
 
 

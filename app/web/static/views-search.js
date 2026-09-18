@@ -293,7 +293,7 @@ function drawRows(all) {
       <div class="mono ${CAT_FAMILY[c.category] || ''}" title="${esc(c.company_name || '')}">${esc(monogram(c.company_name))}</div>
       <div style="min-width:0"><div class="t">${esc(c.email)}${flags}</div>
         ${name || c.role_title ? `<div class="s">${name ? `<b>${esc(name)}</b>` : ''}${name && c.role_title ? ' — ' : ''}${esc((c.role_title || '').slice(0, 80))}</div>` : ''}</div>
-      <div class="firm meta" style="text-align:left"><b>${esc(c.company_name || '')}</b>${esc([c.city, c.size].filter(Boolean).join(' · '))}</div>
+      <div class="firm meta" style="text-align:left"><b>${esc(c.company_name || '')}</b>${esc([c.city, c.size].filter(Boolean).join(' · '))}${c.fit_terms ? `<span class="fit" title="Métier repéré sur le site">✓ ${esc(c.fit_terms)}</span>` : ''}</div>
       <div class="catcell"><span class="catpill ${esc(c.category)}"><i></i>${esc(CATEGORY[c.category] || c.category)}</span></div>
       <div class="actions">${linkedinBtn(c)}<span class="score ${tier}">${Math.round(c.score)}</span>${act}</div>
       ${open ? `<div class="detail"><ul>${reasons.map(x => `<li>${esc(x)}</li>`).join('') || '<li>Score de base de la catégorie.</li>'}</ul><div>${src}</div></div>` : ''}

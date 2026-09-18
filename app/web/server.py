@@ -710,10 +710,11 @@ async def market(payload: MarketPayload) -> list[dict]:
 
 
 @app.get("/api/runs/{run_id}/recipients")
-async def run_recipients(run_id: int) -> dict:
+async def run_recipients(run_id: int, fit: int = 1) -> dict:
+    """Les destinataires proposés ; `fit=0` garde aussi les entreprises sans trace du métier."""
     if db.get_run(run_id) is None:
         raise HTTPException(status_code=404, detail="Recherche inconnue")
-    return engine.pick_recipients(run_id)
+    return engine.pick_recipients(run_id, require_fit=bool(fit))
 
 
 @app.post("/api/compose/preview")

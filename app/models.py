@@ -39,6 +39,8 @@ class Company:
     domain_method: str | None = None   # comment le domaine a été trouvé
     tagline: str | None = None         # titre + description de la page d'accueil
     about: str | None = None           # texte utile du site (accueil, à propos), pour comprendre l'activité
+    fit: int = 0                       # preuve que le métier visé existe déjà dans l'entreprise
+    fit_terms: str | None = None       # ce qui a été relevé : « product manager, ux, cpo »
 
     @property
     def slug_source(self) -> str:

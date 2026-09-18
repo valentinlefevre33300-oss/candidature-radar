@@ -60,6 +60,8 @@ CREATE TABLE IF NOT EXISTS companies (
     tagline     TEXT,
     about       TEXT,
     brief       TEXT,
+    fit         INTEGER DEFAULT 0,
+    fit_terms   TEXT,
     seen_at     TEXT NOT NULL
 );
 
@@ -247,7 +249,8 @@ def init_db(path: Path | None = None) -> None:
     with connect(path) as conn:
         conn.executescript(SCHEMA)
         _upgrade_outreach(conn)
-        _add_missing_columns(conn, "companies", {"tagline": "TEXT", "about": "TEXT", "brief": "TEXT"})
+        _add_missing_columns(conn, "companies", {"tagline": "TEXT", "about": "TEXT", "brief": "TEXT",
+                                          "fit": "INTEGER DEFAULT 0", "fit_terms": "TEXT"})
         _add_missing_columns(conn, "contacts", {"is_manager": "INTEGER DEFAULT 0", "linkedin_url": "TEXT"})
         _add_missing_columns(conn, "applications", {
             "linkedin_url": "TEXT", "prepared_at": "TEXT", "validated_at": "TEXT",
@@ -282,14 +285,16 @@ def save_company(company: Company) -> None:
     with connect() as conn:
         conn.execute(
             "INSERT INTO companies (siren, name, naf, city, postal_code, department, size, "
-            "domain, domain_method, tagline, about, seen_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) "
+            "domain, domain_method, tagline, about, fit, fit_terms, seen_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(siren) DO UPDATE SET domain=excluded.domain, "
             "domain_method=excluded.domain_method, "
             "tagline=COALESCE(excluded.tagline, companies.tagline), "
-            "about=COALESCE(excluded.about, companies.about), seen_at=excluded.seen_at",
+            "about=COALESCE(excluded.about, companies.about), "
+            "fit=excluded.fit, fit_terms=excluded.fit_terms, seen_at=excluded.seen_at",
             (company.siren, company.name, company.naf, company.city, company.postal_code,
              company.department, company.size, company.domain, company.domain_method,
-             company.tagline, company.about, _now()),
+             company.tagline, company.about, company.fit, company.fit_terms, _now()),
         )
 
 
@@ -432,6 +437,7 @@ def run_contacts(run_id: int) -> list[dict]:
     with connect() as conn:
         return [dict(r) for r in conn.execute(
             "SELECT c.*, co.city, co.size, co.domain, co.naf, co.tagline, co.about, co.brief, "
+            "co.fit, co.fit_terms, "
             "o.status AS outreach_status, o.note AS outreach_note "
             "FROM contacts c "
             "LEFT JOIN companies co ON co.siren = c.company_siren "

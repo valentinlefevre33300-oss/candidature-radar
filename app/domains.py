@@ -271,6 +271,63 @@ def classify_role(role_title: str | None, domain: str | None) -> tuple[str | Non
     return None, is_manager(text, domain)
 
 
+# Domaines voisins : une entreprise qui a des designers ou des chefs de projet a
+# de bonnes chances d'avoir (ou de vouloir) un product owner.
+ADJACENT: dict[str, list[str]] = {
+    "produit": ["design", "projet", "tech"],
+    "design": ["produit", "marketing"],
+    "tech": ["produit"],
+    "projet": ["produit", "tech"],
+    "marketing": ["design", "commercial"],
+    "commercial": ["marketing"],
+}
+
+_EVIDENCE_RE: dict[str, list[tuple[str, re.Pattern[str]]]] = {}
+
+
+# Un mot désigne une personne (et pas un thème) s'il a une terminaison de métier
+# ou s'il est un titre en soi. « produit », « cloud », « design » n'en sont pas.
+_PERSON_SUFFIX_RE = re.compile(r"(eur|euse|er|ist|iste|ien|ienne|ecte|ant|ante|ographe|logue)$")
+_TITLE_WORDS = {"chef", "cheffe", "head", "lead", "responsable", "directeur", "directrice", "owner",
+                "manager", "cpo", "cto", "dsi", "drh", "vp", "chief", "president", "presidente", "dg", "pdg",
+                "architecte", "consultant", "consultante", "analyst", "analyste"}
+
+
+def _names_a_person(term: str) -> bool:
+    words = re.split(r"[\s-]+", _norm(term))
+    return any(w in _TITLE_WORDS or (len(w) >= 5 and _PERSON_SUFFIX_RE.search(w)) for w in words)
+
+
+def _evidence_terms(domain: str) -> list[tuple[str, re.Pattern[str]]]:
+    """Intitulés de poste qui valent preuve dans une page : les fonctions qui dirigent le
+    métier, et les intitulés qui désignent une personne — jamais un simple thème."""
+    if domain not in _EVIDENCE_RE:
+        spec = DOMAINS[domain]
+        terms = list(spec["heads"]) + [t for t in spec["job"] if len(t) >= 4 and _names_a_person(t)]
+        _EVIDENCE_RE[domain] = [(t, re.compile(r"\b" + re.escape(_norm(t)) + r"\b")) for t in terms]
+    return _EVIDENCE_RE[domain]
+
+
+def find_evidence(text: str, domain: str | None, limit: int = 8) -> list[str]:
+    """Les intitulés du métier visé (puis des métiers voisins) présents dans un texte."""
+    if not domain or not text:
+        return []
+    haystack = _norm(text)
+    found: list[str] = []
+    for key in [domain, *ADJACENT.get(domain, [])]:
+        for term, pattern in _evidence_terms(key):
+            if term not in found and pattern.search(haystack):
+                found.append(term)
+                if len(found) >= limit:
+                    return found
+    return found
+
+
+def company_fit(exact_people: int, adjacent_people: int, terms: list[str]) -> int:
+    """Indice de pertinence : des personnes du métier valent plus que des mots dans une page."""
+    return 2 * exact_people + adjacent_people + min(len(terms), 5)
+
+
 def domain_label(domain: str | None) -> str:
     return {"tech": "tech", "produit": "produit", "design": "design", "marketing": "marketing",
             "commercial": "commercial", "finance": "finance", "rh": "RH", "ops": "opérations",

@@ -94,7 +94,7 @@ export async function renderWizard() {
     const s = state.settings || {};
     state.wizard = { step: 0, job: '', ...defaultZone(), head: 'pme', min: '', max: '', market: null, sectors: new Set(),
                      showAll: false, companies: [], picked: new Set(), total: 0, cq: '', csec: 'all', loading: false,
-                     runId: null, recipients: [], chosen: new Set(), excluded: {},
+                     runId: null, recipients: [], chosen: new Set(), excluded: {}, fitOnly: true,
                      cv: s.settings?.cv_path || '', cvName: s.cv_name || '',
                      linkedin: s.settings?.linkedin_url || '', portfolio: s.settings?.portfolio_url || '',
                      subject: s.defaults?.subject || '', body: s.defaults?.body || '', personalize: !!s.claude, preview: null, busy: false };
@@ -119,7 +119,7 @@ export async function renderWizard() {
 
 async function loadRecipients() {
   const w = state.wizard;
-  const data = await api(`/api/runs/${w.runId}/recipients`);
+  const data = await api(`/api/runs/${w.runId}/recipients?fit=${w.fitOnly ? 1 : 0}`);
   w.recipients = data.recipients; w.excluded = data.excluded;
   w.chosen = new Set(data.recipients.map(r => r.email));
 }
@@ -225,12 +225,14 @@ function drawWizard() {
     const exTxt = [ex.deja_contactes ? `${ex.deja_contactes} déjà contactée${ex.deja_contactes > 1 ? 's' : ''}` : '',
                    ex.score_faible ? `${ex.score_faible} peu pertinent${ex.score_faible > 1 ? 's' : ''}` : '',
                    ex.domaine_tiers ? `${ex.domaine_tiers} prestataire${ex.domaine_tiers > 1 ? 's' : ''}` : '',
-                   ex.hors_sujet ? `${ex.hors_sujet} hors sujet` : ''].filter(Boolean).join(' · ');
+                   ex.hors_sujet ? `${ex.hors_sujet} hors sujet` : '',
+                   ex.sans_metier ? `${ex.sans_metier} entreprise${ex.sans_metier > 1 ? 's' : ''} sans trace du métier` : ''].filter(Boolean).join(' · ');
     inner = `
       <p class="kicker">Une personne par entreprise, la mieux placée</p>
       <h1>${n} personne${n > 1 ? 's' : ''} à qui écrire<span class="dot-accent">.</span></h1>
       <div class="sub" style="color:var(--muted);margin:10px 0 18px">Décoche celles que tu ne veux pas. ${exTxt ? `<span class="tag plain" style="margin-left:0">écartés : ${esc(exTxt)}</span>` : ''}</div>
-      ${w.recipients.length ? '' : '<div class="banner"><span>Aucun contact exploitable dans cette recherche. Reviens en arrière pour élargir la cible.</span></div>'}
+      <label class="check" style="margin-bottom:12px"><button type="button" class="switch ${w.fitOnly ? 'on' : ''}" id="wzFit"></button><span><b style="color:var(--ink)">Seulement les entreprises où le métier existe déjà</b> <span class="muted">— repéré sur leur site : personnes de l’équipe ou intitulés du métier visé et des métiers voisins</span></span></label>
+      ${w.recipients.length ? '' : `<div class="banner"><span>Aucun contact exploitable${w.fitOnly && ex.sans_metier ? ` : ${ex.sans_metier} entreprise${ex.sans_metier > 1 ? 's' : ''} écartée${ex.sans_metier > 1 ? 's' : ''} faute de trace du métier — désactive le filtre pour les revoir` : ' dans cette recherche. Reviens en arrière pour élargir la cible'}.</span></div>`}
       ${w.recipients.length ? `<div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap">
         <button class="btn btn-white btn-sm" id="wzLinkedin">in Trouver les profils LinkedIn</button>
         <button class="btn btn-white btn-sm" id="wzExport">⬇ Exporter la sélection (CSV)</button>
@@ -242,7 +244,7 @@ function drawWizard() {
             <div class="mono sm ${CAT_FAMILY[r.category] || ''}">${esc(monogram(r.company_name))}</div>
             <div style="min-width:0"><div class="t" style="font-size:14px">${esc(r.email)}${contactTags(r)}</div>
               <div class="s">${name ? `<b>${esc(name)}</b>` : ''}${name && r.role_title ? ' — ' : ''}${esc((r.role_title || '').slice(0, 60))}</div></div>
-            <div class="meta" style="text-align:left"><b>${esc(pretty(r.company_name))}</b>${esc([r.company_city, r.company_size].filter(Boolean).join(' · '))}</div>
+            <div class="meta" style="text-align:left"><b>${esc(pretty(r.company_name))}</b>${esc([r.company_city, r.company_size].filter(Boolean).join(' · '))}${r.company_fit_terms ? `<span class="fit" title="Relevé sur le site">✓ ${esc(r.company_fit_terms)}</span>` : r.category === 'metier' ? '' : '<span class="fit none">aucune trace du métier</span>'}</div>
             <span class="catpill ${esc(r.category)}"><i></i>${esc(CATEGORY[r.category] || r.category)}</span>
             ${linkedinBtn(r)}
             ${r.company_brief ? `<div class="detail" style="padding-left:78px;white-space:pre-line">${esc(r.company_brief)}</div>` : ''}</div>`; }).join('')}
@@ -378,6 +380,7 @@ function bindWizard() {
     $$('#wzRecip input[type=checkbox]').forEach(c => c.onchange = () => { c.checked ? w.chosen.add(c.dataset.e) : w.chosen.delete(c.dataset.e);
       const n = w.chosen.size; const b = $('#wzNext'); b.disabled = !n; b.textContent = `Continuer avec ${n} destinataire${n > 1 ? 's' : ''}`; $('h1').innerHTML = `${n} personne${n > 1 ? 's' : ''} à qui écrire<span class="dot-accent">.</span>`; });
     $('#wzNext').onclick = () => { w.step = 4; drawWizard(); };
+    $('#wzFit').onclick = async () => { w.fitOnly = !w.fitOnly; try { await loadRecipients(); } catch (e) { toast(e.message); } drawWizard(); };
     const li = $('#wzLinkedin'); if (li) li.onclick = async () => {
       li.disabled = true; li.textContent = 'Recherche des profils…';
       try {

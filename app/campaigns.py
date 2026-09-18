@@ -66,19 +66,25 @@ def already_reached() -> tuple[set[str], set[str]]:
     return emails, sirens
 
 
-def pick_recipients(run_id: int, *, min_score: float = MIN_SCORE) -> dict:
+def pick_recipients(run_id: int, *, min_score: float = MIN_SCORE, require_fit: bool = True) -> dict:
     """Un interlocuteur par entreprise, à partir des contacts d'une recherche.
 
+    `require_fit` : n'écrire qu'aux entreprises où le métier visé (ou un métier
+    voisin) a laissé une trace sur le site — moins de volume, plus de pertinence.
     Renvoie {"recipients": [...], "excluded": {...}} pour que l'assistant puisse
     dire ce qu'il a écarté et pourquoi.
     """
     reached_emails, reached_sirens = already_reached()
     best: dict[str, dict] = {}
-    excluded = {"deja_contactes": 0, "hors_sujet": 0, "score_faible": 0, "domaine_tiers": 0}
+    excluded = {"deja_contactes": 0, "hors_sujet": 0, "score_faible": 0, "domaine_tiers": 0, "sans_metier": 0}
+    no_fit: set[str] = set()
 
     for contact in db.run_contacts(run_id):
         email = contact["email"].lower()
         key = contact.get("company_siren") or contact.get("company_name") or email
+        if require_fit and not (contact.get("fit") or 0) and contact.get("category") != "metier":
+            no_fit.add(key)
+            continue
         if email in reached_emails or (contact.get("company_siren") in reached_sirens):
             excluded["deja_contactes"] += 1
             continue
@@ -119,9 +125,12 @@ def pick_recipients(run_id: int, *, min_score: float = MIN_SCORE) -> dict:
                 "company_tagline": contact.get("tagline"),
                 "company_about": contact.get("about"),
                 "company_brief": contact.get("brief"),
+                "company_fit": contact.get("fit") or 0,
+                "company_fit_terms": contact.get("fit_terms"),
             }
 
-    recipients = sorted(best.values(), key=lambda r: r["_rank"])
+    excluded["sans_metier"] = len(no_fit - set(best))
+    recipients = sorted(best.values(), key=lambda r: (-min(r["company_fit"], 6), r["_rank"]))
     for r in recipients:
         r.pop("_rank", None)
     return {"recipients": recipients, "excluded": excluded}

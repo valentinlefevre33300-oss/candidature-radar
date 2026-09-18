@@ -446,6 +446,21 @@ check(batch_needed(25, 25, 3, True) == 22, "apres 19 h : on prepare le lendemain
 check(batch_needed(25, 0, 30, False) == 0, "deja plus de rediges que le plafond : rien")
 
 # --------------------------------------------------------------------------
+print("\n# Preuve de metier : le poste vise ou ses voisins sur le site")
+from app.domains import find_evidence, company_fit, ADJACENT
+_page = "Notre equipe : Sophie, Product Manager ; Karim, UX designer ; Julie, cheffe de projet. Nous recrutons un Product Owner."
+_ev = find_evidence(_page, "produit")
+check("product manager" in _ev and "product owner" in _ev, "intitules du metier vise releves")
+check("design" in ADJACENT["produit"] and any("design" in t for t in _ev), "les metiers voisins (design) comptent")
+check(find_evidence("Plombier chauffagiste, devis gratuit, intervention 24h", "produit") == [], "aucune trace sur un site hors sujet")
+check(find_evidence("Notre PO est top", "produit") == [], "un sigle de deux lettres ne vaut pas preuve")
+check(company_fit(0, 0, []) == 0 and company_fit(1, 0, []) == 2 and company_fit(0, 1, ["ux"]) == 2, "indice : personne du metier = 2, voisine = 1, intitule = 1")
+check(company_fit(0, 0, ["a", "b", "c", "d", "e", "f", "g"]) == 5, "les intitules plafonnent a 5")
+check(find_evidence("Nos produits, notre design, le cloud et le reseau mobile", "produit") == [], "des mots-themes (produit, design, cloud, reseau) ne valent pas preuve")
+check(set(find_evidence("Recrutement : developpeur backend, UX designer, chef de produit, CPO", "produit")) >= {"chef de produit", "cpo"}, "des intitules de poste valent preuve")
+check("developpeur" in find_evidence("Notre developpeur Python", "tech") and "python" not in find_evidence("Notre developpeur Python", "tech"), "developpeur oui, python non")
+
+# --------------------------------------------------------------------------
 print("\n" + "=" * 62)
 if FAILURES:
     print(f"{len(FAILURES)} ECHEC(S) :")
