@@ -524,7 +524,9 @@ async function loadActivity(id) {
 async function loadTable(id) {
   const cs = state.campaign;
   const qs = new URLSearchParams({ page: cs.page, size: 10, q: cs.q, ...(cs.filter ? { status: cs.filter } : {}) });
-  const d = await api(`/api/campaigns/${id}/applications?${qs}`);
+  let d;
+  try { d = await api(`/api/campaigns/${id}/applications?${qs}`); }
+  catch (e) { clearInterval(refreshTimer); if (location.hash === `#/campagnes/${id}`) toast(e.message); return; }   // campagne supprimée : on arrête de la rafraîchir
   const total = Object.values(d.counts).reduce((a, b) => a + b, 0);
   $('#cpCount').textContent = `${total} candidature${total > 1 ? 's' : ''}`;
   $('#cpSeg').innerHTML = [['', 'Toutes', total], ...Object.entries(APP_STATUS).map(([k, l]) => [k, l, d.counts[k] || 0])]
