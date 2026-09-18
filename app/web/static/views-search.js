@@ -1,5 +1,5 @@
 /* Vues : Recherche, Résultats d'une recherche, Suivi. */
-import { download, $, $$, esc, api, state, toast, fmtDate, sectorLabel, monogram, pageHead, enableTilt, contactTags,
+import { download, linkedinBtn, $, $$, esc, api, state, toast, fmtDate, sectorLabel, monogram, pageHead, enableTilt, contactTags,
          cityPicker, describeCities, runZone,
          STATUS, CATEGORY, CAT_FAMILY, SECTOR_FAMILY, FAMILY_INK, HEADCOUNT } from './core.js';
 
@@ -222,7 +222,7 @@ export async function renderRun(id) {
     ${pageHead({ back: { href: '#/recherche', label: 'Recherches' },
                  kicker: esc([secs, zone, fmtDate(run.started_at)].filter(Boolean).join(' · ')), title: esc(run.job_title),
                  sub: `${run.companies ?? 0} entreprises explorées, ${rows.length} contact${rows.length > 1 ? 's' : ''} trouvé${rows.length > 1 ? 's' : ''}. Clique une ligne pour lire pourquoi elle est là.`,
-                 right: `<button class="btn btn-white" id="exportBtn">Exporter CSV</button><a class="btn btn-accent" href="#/campagnes/nouvelle?run=${id}">Créer une campagne</a>` })}
+                 right: `<button class="btn btn-white" id="liBtn" title="Cherche le profil des personnes nommées (sélection, sinon toutes)">in Profils LinkedIn</button><button class="btn btn-white" id="exportBtn">Exporter CSV</button><a class="btn btn-accent" href="#/campagnes/nouvelle?run=${id}">Créer une campagne</a>` })}
     <div class="toolbar">
       <div class="pills on-paper" id="catSeg">
         ${[['all', 'Tous'], ['metier', 'Métier'], ['direction', 'Direction'], ['rh', 'RH'], ['nominatif', 'Nominatifs'], ['generique', 'Génériques']]
@@ -238,6 +238,16 @@ export async function renderRun(id) {
   $$('#catSeg .pill').forEach(b => b.onclick = () => { r.filter = b.dataset.k; renderRun(id); });
   $('#hideLow').onchange = e => { r.hideLow = e.target.checked; drawRows(rows); };
   $('#q').oninput = e => { r.q = e.target.value.toLowerCase(); drawRows(rows); };
+  $('#liBtn').onclick = async () => {
+    const b = $('#liBtn'); b.disabled = true; b.textContent = 'Recherche des profils…';
+    try {
+      const res = await api(`/api/runs/${id}/linkedin`, { method: 'POST', body: JSON.stringify({ emails: [...r.sel] }) });
+      rows.forEach(c => { if (res.found[c.email]) c.linkedin_url = res.found[c.email]; });
+      const n = Object.keys(res.found).length;
+      toast(res.searched ? `${n} profil${n > 1 ? 's' : ''} trouvé${n > 1 ? 's' : ''} sur ${res.searched} cherché${res.searched > 1 ? 's' : ''}` : 'Rien à chercher : profils déjà connus ou personnes sans nom');
+    } catch (e) { toast(e.message); }
+    b.disabled = false; b.textContent = 'in Profils LinkedIn'; drawRows(rows);
+  };
   $('#exportBtn').onclick = () => {
     if (!r.sel.size) { location.href = `/api/runs/${id}/export`; return; }
     download(`/api/runs/${id}/export`, { emails: [...r.sel] }, `contacts-${id}-selection.csv`).catch(e => toast(e.message));
@@ -285,7 +295,7 @@ function drawRows(all) {
         ${name || c.role_title ? `<div class="s">${name ? `<b>${esc(name)}</b>` : ''}${name && c.role_title ? ' — ' : ''}${esc((c.role_title || '').slice(0, 80))}</div>` : ''}</div>
       <div class="firm meta" style="text-align:left"><b>${esc(c.company_name || '')}</b>${esc([c.city, c.size].filter(Boolean).join(' · '))}</div>
       <div class="catcell"><span class="catpill ${esc(c.category)}"><i></i>${esc(CATEGORY[c.category] || c.category)}</span></div>
-      <div class="actions"><span class="score ${tier}">${Math.round(c.score)}</span>${act}</div>
+      <div class="actions">${linkedinBtn(c)}<span class="score ${tier}">${Math.round(c.score)}</span>${act}</div>
       ${open ? `<div class="detail"><ul>${reasons.map(x => `<li>${esc(x)}</li>`).join('') || '<li>Score de base de la catégorie.</li>'}</ul><div>${src}</div></div>` : ''}
     </div>`;
   }).join('');

@@ -1,6 +1,6 @@
 /* Vues : tableau de bord des campagnes, assistant de création, page de campagne. */
 import { $, $$, esc, api, upload, state, toast, fmtDate, fmtDay, relTime, sectorLabel, monogram, pretty, pageHead,
-         enableTilt, highlightVars, openModal, closeModal, linkedinSearch, queryParam, contactTags,
+         enableTilt, highlightVars, openModal, closeModal, linkedinSearch, linkedinBtn, queryParam, contactTags,
          cityPicker, describeCities, defaultZone, download, capName,
          CATEGORY, CAT_FAMILY, SECTOR_FAMILY, APP_STATUS, CAMP_STATUS, HEADCOUNT } from './core.js';
 import { startSearch, headcountRange, renderProgress, updateProgress } from './views-search.js';
@@ -232,6 +232,7 @@ function drawWizard() {
       <div class="sub" style="color:var(--muted);margin:10px 0 18px">Décoche celles que tu ne veux pas. ${exTxt ? `<span class="tag plain" style="margin-left:0">écartés : ${esc(exTxt)}</span>` : ''}</div>
       ${w.recipients.length ? '' : '<div class="banner"><span>Aucun contact exploitable dans cette recherche. Reviens en arrière pour élargir la cible.</span></div>'}
       ${w.recipients.length ? `<div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap">
+        <button class="btn btn-white btn-sm" id="wzLinkedin">in Trouver les profils LinkedIn</button>
         <button class="btn btn-white btn-sm" id="wzExport">⬇ Exporter la sélection (CSV)</button>
         <button class="btn btn-white btn-sm" id="wzBriefs" ${state.settings?.claude ? '' : 'disabled'}>🔎 Analyser les enjeux des entreprises</button>
         <span class="hint">${state.settings?.claude ? 'Claude lit le site de chaque entreprise et résume activité et enjeux — à relire avant d’écrire.' : 'Clé Claude absente : analyse indisponible.'}</span></div>` : ''}
@@ -243,6 +244,7 @@ function drawWizard() {
               <div class="s">${name ? `<b>${esc(name)}</b>` : ''}${name && r.role_title ? ' — ' : ''}${esc((r.role_title || '').slice(0, 60))}</div></div>
             <div class="meta" style="text-align:left"><b>${esc(pretty(r.company_name))}</b>${esc([r.company_city, r.company_size].filter(Boolean).join(' · '))}</div>
             <span class="catpill ${esc(r.category)}"><i></i>${esc(CATEGORY[r.category] || r.category)}</span>
+            ${linkedinBtn(r)}
             ${r.company_brief ? `<div class="detail" style="padding-left:78px;white-space:pre-line">${esc(r.company_brief)}</div>` : ''}</div>`; }).join('')}
       </div>`;
     foot = `<button class="btn btn-accent btn-lg btn-block" id="wzNext" ${n ? '' : 'disabled'}>Continuer avec ${n} destinataire${n > 1 ? 's' : ''}</button>`;
@@ -376,6 +378,16 @@ function bindWizard() {
     $$('#wzRecip input[type=checkbox]').forEach(c => c.onchange = () => { c.checked ? w.chosen.add(c.dataset.e) : w.chosen.delete(c.dataset.e);
       const n = w.chosen.size; const b = $('#wzNext'); b.disabled = !n; b.textContent = `Continuer avec ${n} destinataire${n > 1 ? 's' : ''}`; $('h1').innerHTML = `${n} personne${n > 1 ? 's' : ''} à qui écrire<span class="dot-accent">.</span>`; });
     $('#wzNext').onclick = () => { w.step = 4; drawWizard(); };
+    const li = $('#wzLinkedin'); if (li) li.onclick = async () => {
+      li.disabled = true; li.textContent = 'Recherche des profils…';
+      try {
+        const res = await api(`/api/runs/${w.runId}/linkedin`, { method: 'POST', body: JSON.stringify({ emails: [...w.chosen] }) });
+        w.recipients.forEach(r => { if (res.found[r.email]) r.linkedin_url = res.found[r.email]; });
+        const n = Object.keys(res.found).length;
+        toast(res.searched ? `${n} profil${n > 1 ? 's' : ''} trouvé${n > 1 ? 's' : ''} sur ${res.searched} cherché${res.searched > 1 ? 's' : ''}` : 'Rien à chercher : profils déjà connus ou personnes sans nom');
+      } catch (e) { toast(e.message); }
+      drawWizard();
+    };
     const exp = $('#wzExport'); if (exp) exp.onclick = () => {
       if (!w.chosen.size) { toast('Coche au moins une personne'); return; }
       download(`/api/runs/${w.runId}/export`, { emails: [...w.chosen] }, `contacts-${w.runId}.csv`).catch(e => toast(e.message));
@@ -501,7 +513,7 @@ async function loadActivity(id) {
   const fl = $('#cpFollow'); if (fl) fl.innerHTML = follow.length ? follow.map(r => `<div class="item" style="grid-template-columns:40px 1fr auto">
       <div class="mono sm ${CAT_FAMILY[r.category] || ''}">${esc(monogram(r.company_name))}</div>
       <div><div class="t" style="font-size:14px">${esc(pretty(r.company_name))}</div><div class="s">ouvert ${r.opens}× · ${esc([r.first_name, r.last_name].filter(Boolean).join(' ') || r.email)}</div></div>
-      <a class="btn btn-white btn-sm" href="${linkedinSearch(r)}" target="_blank" rel="noopener" title="Chercher sur LinkedIn">in</a></div>`).join('')
+      ${linkedinBtn(r)}</div>`).join('')
     : '<div class="muted" style="font-size:13px">Personne n’a encore ouvert.</div>';
 }
 
@@ -524,7 +536,7 @@ async function loadTable(id) {
       <td>${r.sent_at ? fmtDay(r.sent_at) : r.scheduled_at ? `<span class="muted">${fmtDate(r.scheduled_at)}</span>` : '—'}</td>
       <td><span class="st ${r.status}">${APP_STATUS[r.status] || r.status}</span>${r.opens ? `<span class="muted" style="font-size:11px;margin-left:6px">×${r.opens}</span>` : ''}</td>
       <td><button class="btn btn-white btn-sm" data-view="${r.id}">✉ Voir</button></td>
-      <td><a class="btn btn-white btn-sm" href="${linkedinSearch(r)}" target="_blank" rel="noopener">in</a></td>
+      <td>${linkedinBtn(r)}</td>
       <td>${r.status === 'programme' ? `<button class="btn btn-text btn-sm" data-cancel="${r.id}" title="Annuler cet envoi">×</button>` : ''}</td>
     </tr>`).join('') : `<tr><td colspan="8" class="muted" style="text-align:center;padding:28px">Aucune candidature${cs.filter || cs.q ? ' pour ce filtre' : ''}.</td></tr>`;
 

@@ -419,6 +419,24 @@ check('<a href="https://linkedin.com/in/valentin"' in _h, "lien cliquable dans l
 check("<a" not in _html("Un texte sans adresse <script>"), "pas de lien invente, HTML echappe")
 
 # --------------------------------------------------------------------------
+print("\n# Profils LinkedIn : liens du site et controle par le nom")
+from app.resolve.linkedin import canonical, matches, profile_links, attach
+from app.models import Contact as _Ct
+check(canonical("https://fr.linkedin.com/in/jean-claude-labrune-12ab3/?trk=x") == "https://www.linkedin.com/in/jean-claude-labrune-12ab3", "adresse de profil canonique")
+check(canonical("https://www.linkedin.com/company/acme") is None, "une page entreprise n'est pas un profil")
+check(matches("https://www.linkedin.com/in/jean-claude-labrune-12ab3", "Jean-Claude", "Labrune"), "prenom compose + nom dans l'identifiant")
+check(matches("https://www.linkedin.com/in/alabrune", "Aude", "Labrune") is False, "initiale seule : pas de rattachement")
+check(matches("https://www.linkedin.com/in/aude-balleydier", "Aude", "Balleydier"), "accent et casse ignores")
+check(matches("https://www.linkedin.com/in/aude-balley", "Aude", "Balleydier") is False, "nom tronque : refuse")
+_soup = BeautifulSoup('<div><a href="https://www.linkedin.com/in/aude-balleydier">in</a><a href="https://linkedin.com/in/marc-dubois-77/">in</a><a href="https://twitter.com/x">t</a></div>', "lxml")
+_links = profile_links(_soup)
+check(_links == ["https://www.linkedin.com/in/aude-balleydier", "https://www.linkedin.com/in/marc-dubois-77"], "profils releves sur la page, sans doublon ni bruit")
+_cs = [_Ct(email="aude.balleydier@acme.fr", company_siren="1", company_name="ACME", source_url="u", first_name="Aude", last_name="Balleydier"),
+       _Ct(email="contact@acme.fr", company_siren="1", company_name="ACME", source_url="u")]
+check(attach(_cs, _links) == 1 and _cs[0].linkedin_url == "https://www.linkedin.com/in/aude-balleydier" and _cs[1].linkedin_url is None,
+      "rattachement aux seules personnes nommees")
+
+# --------------------------------------------------------------------------
 print("\n" + "=" * 62)
 if FAILURES:
     print(f"{len(FAILURES)} ECHEC(S) :")

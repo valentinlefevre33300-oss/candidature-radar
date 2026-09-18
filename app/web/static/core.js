@@ -193,6 +193,11 @@ export const describeCities = (cities, agglo) => {
 export const linkedinSearch = (r) => 'https://www.linkedin.com/search/results/people/?keywords='
   + encodeURIComponent([r.first_name, r.last_name, pretty(r.company_name)].filter(Boolean).join(' '));
 
+/* Le bouton « in » : le profil s'il est connu, sinon la recherche LinkedIn préremplie. */
+export const linkedinBtn = (r) => r.linkedin_url
+  ? `<a class="btn btn-in btn-sm found" href="${esc(r.linkedin_url)}" target="_blank" rel="noopener" title="Profil LinkedIn">in</a>`
+  : `<a class="btn btn-in btn-sm" href="${linkedinSearch(r)}" target="_blank" rel="noopener" title="Chercher sur LinkedIn (profil non trouvé)">in</a>`;
+
 /* Zone lisible d'une recherche : villes des paramètres, sinon le département. */
 export function runZone(run) {
   let p = {}; try { p = JSON.parse(run.params || '{}'); } catch {}

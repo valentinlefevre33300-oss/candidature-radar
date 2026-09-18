@@ -29,6 +29,7 @@ from ..config import (APP_PASSWORD, APP_USER, BASE_URL, DAILY_CAP, DATA_DIR, DRY
 from ..models import Company, SearchQuery
 from ..naf import catalogue, codes_for, label_for_code, sector_for_code
 from ..sources.sirene import count_companies, search_companies
+from ..resolve import linkedin as linkedin_lookup
 from ..pipeline import run_search
 
 log = logging.getLogger(__name__)
@@ -381,6 +382,29 @@ async def export_selection(run_id: int, payload: ExportPayload) -> FileResponse:
         raise HTTPException(status_code=404, detail="Aucun contact a exporter")
     path = db.export_csv(run_id, emails=sorted(wanted) or None)
     return FileResponse(path, filename=path.name, media_type="text/csv")
+
+
+class LinkedinPayload(BaseModel):
+    emails: list[str] = Field(default_factory=list)
+
+
+@app.post("/api/runs/{run_id}/linkedin")
+async def find_linkedin(run_id: int, payload: LinkedinPayload) -> dict:
+    """Cherche par moteur le profil des personnes nommées qui n'en ont pas encore."""
+    wanted = {e.strip().lower() for e in payload.emails}
+    rows = [r for r in db.run_contacts(run_id)
+            if (not wanted or str(r.get("email", "")).lower() in wanted)
+            and r.get("first_name") and r.get("last_name") and not r.get("linkedin_url")][:40]
+    found: dict[str, str] = {}
+    async with httpx.AsyncClient(follow_redirects=True) as client:
+        for row in rows:
+            url = await linkedin_lookup.find_profile(client, row["first_name"], row["last_name"],
+                                                    compose.pretty_company(row.get("company_name")))
+            if url:
+                db.set_contact_linkedin(run_id, row["email"], url)
+                found[row["email"]] = url
+            await asyncio.sleep(1.2)   # un moteur gratuit, on ne le martèle pas
+    return {"searched": len(rows), "found": found}
 
 
 class ExplorePayload(BaseModel):

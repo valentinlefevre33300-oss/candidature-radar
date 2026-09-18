@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import csv
 import sqlite3
+from urllib.parse import quote
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -79,6 +80,7 @@ CREATE TABLE IF NOT EXISTS contacts (
     pattern_used  TEXT,
     matched_director INTEGER,
     is_manager    INTEGER,
+    linkedin_url  TEXT,
     mx_ok         INTEGER,
     smtp_ok       INTEGER,
     reasons       TEXT,
@@ -126,6 +128,7 @@ CREATE TABLE IF NOT EXISTS applications (
     first_name       TEXT,
     last_name        TEXT,
     role_title       TEXT,
+    linkedin_url     TEXT,
     category         TEXT,
     score            REAL,
     company_siren    TEXT,
@@ -245,8 +248,9 @@ def init_db(path: Path | None = None) -> None:
         conn.executescript(SCHEMA)
         _upgrade_outreach(conn)
         _add_missing_columns(conn, "companies", {"tagline": "TEXT", "about": "TEXT", "brief": "TEXT"})
-        _add_missing_columns(conn, "contacts", {"is_manager": "INTEGER DEFAULT 0"})
+        _add_missing_columns(conn, "contacts", {"is_manager": "INTEGER DEFAULT 0", "linkedin_url": "TEXT"})
         _add_missing_columns(conn, "applications", {
+            "linkedin_url": "TEXT",
             "company_about": "TEXT", "company_brief": "TEXT",
             "reply_kind": "TEXT",            # refus | interet | question | absence | autre
             "reply_excerpt": "TEXT",         # début de la réponse, sans le texte cité
@@ -306,7 +310,7 @@ def save_contacts(run_id: int, contacts: list[Contact]) -> None:
         (c.email, run_id, c.company_siren, c.company_name, c.first_name, c.last_name,
          c.role_title, c.category, c.score, c.source_url, int(c.is_nominative),
          int(c.was_obfuscated), int(c.inferred), c.pattern_used, int(c.matched_director),
-         int(c.is_manager),
+         int(c.is_manager), c.linkedin_url,
          None if c.mx_ok is None else int(c.mx_ok),
          None if c.smtp_ok is None else int(c.smtp_ok),
          " | ".join(c.reasons), c.found_at)
@@ -316,11 +320,19 @@ def save_contacts(run_id: int, contacts: list[Contact]) -> None:
         conn.executemany(
             "INSERT INTO contacts (email, run_id, company_siren, company_name, first_name, "
             "last_name, role_title, category, score, source_url, is_nominative, was_obfuscated, "
-            "inferred, pattern_used, matched_director, is_manager, mx_ok, smtp_ok, reasons, found_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
-            "ON CONFLICT(email, run_id) DO UPDATE SET score=excluded.score",
+            "inferred, pattern_used, matched_director, is_manager, linkedin_url, mx_ok, smtp_ok, reasons, found_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(email, run_id) DO UPDATE SET score=excluded.score, "
+            "linkedin_url=COALESCE(excluded.linkedin_url, contacts.linkedin_url)",
             rows,
         )
+
+
+
+def set_contact_linkedin(run_id: int, email: str, url: str) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE contacts SET linkedin_url=? WHERE run_id=? AND email=?", (url, run_id, email))
+        conn.execute("UPDATE applications SET linkedin_url=? WHERE email=? AND linkedin_url IS NULL", (url, email))
 
 
 # ------------------------------------------------------------------ suivi ---
@@ -430,7 +442,7 @@ def run_contacts(run_id: int) -> list[dict]:
 EXPORT_COLUMNS = [
     "score", "email", "category", "first_name", "last_name", "role_title",
     "company_name", "city", "size", "domain", "mx_ok", "matched_director", "is_manager",
-    "inferred", "pattern_used", "source_url", "reasons", "found_at",
+    "inferred", "pattern_used", "linkedin_url", "linkedin_recherche", "source_url", "reasons", "found_at",
 ]
 
 
@@ -448,8 +460,16 @@ def export_csv(run_id: int, emails: list[str] | None = None) -> Path:
                                 delimiter=";")
         writer.writeheader()
         for row in rows:
+            row = dict(row)
+            row["linkedin_recherche"] = linkedin_search_url(row)
             writer.writerow(row)
     return path
+
+
+def linkedin_search_url(row: dict) -> str:
+    """Recherche LinkedIn préremplie (nom + entreprise), quand le profil n'est pas connu."""
+    words = [row.get("first_name"), row.get("last_name"), row.get("company_name")]
+    return "https://www.linkedin.com/search/results/people/?keywords=" + quote(" ".join(w for w in words if w))
 
 
 # -------------------------------------------------------------- réglages ---
@@ -538,7 +558,7 @@ def delete_campaign(campaign_id: int) -> None:
 # ---------------------------------------------------------- candidatures ---
 
 APPLICATION_FIELDS = (
-    "email", "first_name", "last_name", "role_title", "category", "score",
+    "email", "first_name", "last_name", "role_title", "linkedin_url", "category", "score",
     "company_siren", "company_name", "company_domain", "company_city", "company_size",
     "company_naf", "company_tagline", "company_about", "company_brief",
     "subject", "body_text", "body_html", "hook",

@@ -26,6 +26,7 @@ from .crawl.spider import crawl_site, is_about_page, page_main_text, page_taglin
 from .domains import classify_role, is_manager, job_domain
 from .extract.emails import extract_emails
 from .extract.team import extract_people
+from .resolve import linkedin
 from .extract.people import (
     PATTERNS,
     classify_mailbox,
@@ -256,6 +257,7 @@ async def process_company(fetcher: PoliteFetcher, client: httpx.AsyncClient,
     domain = job_domain(query.job_title)
     observed: list[Contact] = []
     people: list[tuple[str, str, str, str]] = []   # (prenom, nom, fonction, page)
+    profile_links: list[str] = []                   # profils LinkedIn lies depuis le site
     about_parts: list[str] = []
     for index, (url, html) in enumerate(pages):
         soup = BeautifulSoup(html, "lxml")
@@ -271,6 +273,7 @@ async def process_company(fetcher: PoliteFetcher, client: httpx.AsyncClient,
         # c'est la que se trouvent les responsables de service.
         for first, last, role in extract_people(soup, company.name):
             people.append((first, last, role, url))
+        profile_links.extend(u for u in linkedin.profile_links(soup) if u not in profile_links)
         emails = extract_emails(soup, html)
         if not emails:
             continue
@@ -285,6 +288,7 @@ async def process_company(fetcher: PoliteFetcher, client: httpx.AsyncClient,
     contacts = (observed
                 + _infer_director_emails(company, observed, domain, pattern, guessed)
                 + _infer_people_emails(company, observed, people, domain, pattern, guessed))
+    linkedin.attach(contacts, profile_links)   # profils liés depuis le site, portant le nom
 
     # Verification MX : une seule resolution par domaine, partagee.
     domains = {c.domain for c in contacts}

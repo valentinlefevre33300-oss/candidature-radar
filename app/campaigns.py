@@ -102,6 +102,7 @@ def pick_recipients(run_id: int, *, min_score: float = MIN_SCORE) -> dict:
                 "first_name": contact.get("first_name"),
                 "last_name": contact.get("last_name"),
                 "role_title": contact.get("role_title"),
+                "linkedin_url": contact.get("linkedin_url"),
                 "category": contact.get("category"),
                 "score": contact.get("score"),
                 "inferred": bool(contact.get("inferred")),

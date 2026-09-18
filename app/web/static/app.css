@@ -132,6 +132,9 @@ select.input { appearance: none; -webkit-appearance: none; padding-right: 36px; 
 .btn-accent { background: var(--logo-to); color: #fff; }
 .btn-accent:hover { background: var(--logo-to); opacity: .9; }
 .btn-white { background: #fff; box-shadow: var(--shadow-soft); }
+.btn-in { background: #e8f1fb; color: #0a66c2; font-weight: 800; font-family: Georgia, serif; letter-spacing: -.02em; padding: 0 9px; min-width: 32px; justify-content: center; }
+.btn-in.found { background: #0a66c2; color: #fff; }
+.btn-in:hover { filter: brightness(.95); }
 .btn-white:hover { background: #fff; box-shadow: var(--shadow-active); }
 .btn-sm { padding: 7px 14px; font-size: 13px; }
 .btn-lg { padding: 14px 28px; font-size: 15px; }
@@ -187,7 +190,7 @@ details.adv .adv-body { margin-top: 16px; display: grid; gap: 16px; grid-templat
 .results .item { grid-template-columns: 22px 52px minmax(0, 1.5fr) minmax(0, 1fr) auto auto; }
 .firms .item { grid-template-columns: 24px 40px minmax(0, 1.5fr) minmax(0, .7fr) minmax(0, 1fr); }
 .suivi .item { grid-template-columns: 52px minmax(0, 1.4fr) minmax(0, 1fr) auto minmax(140px, 1fr) auto; }
-.recip .item { grid-template-columns: 24px 40px minmax(0, 1.4fr) minmax(0, 1fr) auto; }
+.recip .item { grid-template-columns: 24px 40px minmax(0, 1.4fr) minmax(0, 1fr) auto auto; }
 @media (max-width: 900px) {
   .results .item { grid-template-columns: 22px 52px 1fr; }
   .results .item > .firm, .results .item > .catcell, .results .item > .actions { grid-column: 3; }

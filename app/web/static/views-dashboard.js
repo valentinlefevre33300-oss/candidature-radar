@@ -1,6 +1,6 @@
 /* Vue : Tableau de bord — envoyés, ouverts, réponses par nature, relances proposées. */
 import { $, $$, esc, api, toast, fmtDate, fmtDay, relTime, monogram, pretty, pageHead, enableTilt,
-         openModal, closeModal, linkedinSearch, CAT_FAMILY, CAMP_STATUS } from './core.js';
+         openModal, closeModal, linkedinSearch, linkedinBtn, CAT_FAMILY, CAMP_STATUS } from './core.js';
 
 const KIND = { refus: 'Refus', interet: 'Intérêt', question: 'Question', absence: 'Absence', autre: 'Autre' };
 const pct = (a, b) => b ? Math.round(100 * a / b) : 0;
@@ -92,7 +92,7 @@ function drawFollowups(rows) {
       <div class="mono ${CAT_FAMILY[r.category] || ''}">${esc(monogram(r.company_name))}</div>
       <div style="min-width:0"><div class="t">${esc(pretty(r.company_name))}</div><div class="s">${name ? `<b>${esc(name)}</b>` : esc(r.email)}${r.role_title ? ' — ' + esc(r.role_title.slice(0, 50)) : ''}</div></div>
       <div class="meta" style="text-align:left"><b>envoyé il y a ${daysAgo(r.sent_at)} j</b>${r.opens ? `ouvert ${r.opens}× · ${relTime(r.last_open_at)}` : 'jamais ouvert'} · ${esc(r.campaign_name)}</div>
-      <div class="actions"><a class="btn btn-white btn-sm" href="${linkedinSearch(r)}" target="_blank" rel="noopener">in</a><button class="btn btn-primary btn-sm" data-follow="${r.id}">Préparer la relance</button></div>
+      <div class="actions">${linkedinBtn(r)}<button class="btn btn-primary btn-sm" data-follow="${r.id}">Préparer la relance</button></div>
     </div>`;
   }).join('');
   $$('[data-follow]', el).forEach(b => b.onclick = () => prepareFollowup(+b.dataset.follow, b));
@@ -130,7 +130,7 @@ function drawReplies(rows) {
       <div style="min-width:0"><div class="t">${esc(pretty(r.company_name))}</div><div class="s">${name ? `<b>${esc(name)}</b>` : esc(r.email)} · ${fmtDate(r.replied_at)}</div></div>
       <div class="s" style="white-space:pre-line">${esc((r.reply_excerpt || '').slice(0, 220))}</div>
       <select class="kind ${esc(r.reply_kind || 'autre')}" data-id="${r.id}">${Object.entries(KIND).map(([k, l]) => `<option value="${k}" ${k === r.reply_kind ? 'selected' : ''}>${l}</option>`).join('')}</select>
-      <div class="actions"><a class="btn btn-white btn-sm" href="${linkedinSearch(r)}" target="_blank" rel="noopener">in</a></div>
+      <div class="actions">${linkedinBtn(r)}</div>
     </div>`;
   }).join('');
   $$('select.kind', el).forEach(s => s.onchange = async () => {
