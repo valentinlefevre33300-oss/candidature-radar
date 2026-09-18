@@ -67,7 +67,7 @@ export async function renderDashboard() {
       <div style="display:flex;gap:8px;align-items:center"><span class="status-pill ${c.status}"><i></i>${CAMP_STATUS[c.status] || c.status}</span></div>
       <div class="nums">
         <div>Envoyés<b>${c.sent}</b></div><div>Ouverts<b>${c.opened}</b></div><div>Réponses<b>${c.replied}</b></div>
-        <div>Programmés<b>${c.scheduled}</b></div>
+        <div>${c.to_review ? 'À valider' : 'À venir'}<b>${c.to_review || c.scheduled}</b></div>
       </div>
     </div>`).join('');
   $$('#camps .camp').forEach(x => x.onclick = () => location.hash = `#/campagnes/${x.dataset.id}`);
@@ -300,7 +300,7 @@ function drawWizard() {
         <div><span>Poste</span><b>${esc(w.job)}</b></div>
         <div><span>Cible</span><b>${esc(describeCities(w.cities, w.agglo))} · ${[...w.sectors].map(sectorLabel).slice(0, 3).join(', ')}${w.sectors.size > 3 ? ` +${w.sectors.size - 3}` : ''}</b></div>
         <div><span>Destinataires</span><b>${n} personne${n > 1 ? 's' : ''}, une par entreprise</b></div>
-        <div><span>Rythme</span><b>${Math.min(n, cap)} par jour max, un toutes les ~4 min, 8 h – 19 h</b></div>
+        <div><span>Rythme</span><b>Par lots de ${Math.min(n, cap)} par jour, rédigés à l’avance${s.review?.mode === 'manuel' ? ' et soumis à ta validation' : ' (bloque ce que tu ne veux pas)'} ; un toutes les ~4 min, 8 h – 19 h</b></div>
         <div><span>En ton nom, depuis</span><b>${sim ? 'Simulation — aucun envoi réel' : gmail.connected ? `Gmail · ${esc(gmail.email || '')}` : '<span style="color:#c53d3a">Gmail non connecté</span>'}</b></div>
         <div><span>Ton message</span><b>${w.personalize && s.claude ? 'Modèle + paragraphe Claude par entreprise' : 'Modèle avec variables'}</b></div>
         <div><span>CV joint</span><b>${esc(w.cvName || 'aucun')}</b></div>
@@ -478,10 +478,11 @@ export async function renderCampaign(id) {
     </div>
     ${q.dry_run ? '<div class="banner info"><span><b>Simulation</b> — les envois sont journalisés mais aucun mail ne part.</span></div>' : ''}
     ${c.status === 'active' && !q.can_send && q.reason ? `<div class="banner plain" style="background:var(--card);color:var(--muted)"><span>En attente : ${esc(q.reason)}.</span></div>` : ''}
+    <div id="cpReview"></div>
     <p class="kicker">Analyse campagne</p>
     <div class="stats">
       ${statCard('Ce mois', `${q.month_sent}<small>/${q.month_cap}</small>`, `${Math.max(0, q.month_cap - q.month_sent)} restantes · toutes campagnes`)}
-      ${statCard('Envoyés', c.sent, `${c.scheduled} programmé${c.scheduled > 1 ? 's' : ''}${c.failed ? ` · ${c.failed} échec${c.failed > 1 ? 's' : ''}` : ''}`, 'tone-tech')}
+      ${statCard('Envoyés', c.sent, `${c.scheduled} à venir${c.to_review ? ` · <b>${c.to_review} à valider</b>` : ''}${c.failed ? ` · ${c.failed} échec${c.failed > 1 ? 's' : ''}` : ''}`, 'tone-tech')}
       ${statCard('Ouverts', c.opened, c.sent ? `${pct(c.opened, c.sent)} % d’ouverture · ${c.replied} réponse${c.replied > 1 ? 's' : ''}` : 'en attente d’envois', 'tone-ux')}
     </div>
     <div style="text-align:center;margin-bottom:22px"><button class="btn btn-white btn-sm" id="cpAct">${cs.activity ? 'Masquer l’activité détaillée ⌃' : 'Voir l’activité & les priorités ⌄'}</button></div>
@@ -502,9 +503,9 @@ export async function renderCampaign(id) {
   $$('[data-act]').forEach(b => b.onclick = () => campaignAction(c, b.dataset.act));
   $('#cpAct').onclick = () => { cs.activity = !cs.activity; $('#cpActivity').classList.toggle('hidden', !cs.activity); $('#cpAct').textContent = cs.activity ? 'Masquer l’activité détaillée ⌃' : 'Voir l’activité & les priorités ⌄'; if (cs.activity) loadActivity(id); };
   $('#cpQ').oninput = (e) => { cs.q = e.target.value; cs.page = 1; loadTable(id); };
-  loadTable(id);
+  loadTable(id); loadReview(id);
   if (cs.activity) loadActivity(id);
-  if (c.status === 'active') refreshTimer = setInterval(() => { if (location.hash === `#/campagnes/${id}`) { loadTable(id); if (cs.activity) loadActivity(id); } else clearInterval(refreshTimer); }, 30000);
+  if (c.status === 'active') refreshTimer = setInterval(() => { if (location.hash === `#/campagnes/${id}`) { loadTable(id); loadReview(id); if (cs.activity) loadActivity(id); } else clearInterval(refreshTimer); }, 30000);
 }
 
 async function loadActivity(id) {
@@ -537,36 +538,84 @@ async function loadTable(id) {
       <td><span class="st ${r.status}">${APP_STATUS[r.status] || r.status}</span>${r.opens ? `<span class="muted" style="font-size:11px;margin-left:6px">×${r.opens}</span>` : ''}</td>
       <td><button class="btn btn-white btn-sm" data-view="${r.id}">✉ Voir</button></td>
       <td>${linkedinBtn(r)}</td>
-      <td>${r.status === 'programme' ? `<button class="btn btn-text btn-sm" data-cancel="${r.id}" title="Annuler cet envoi">×</button>` : ''}</td>
+      <td>${['en_attente', 'a_valider', 'programme'].includes(r.status) ? `<button class="btn btn-text btn-sm" data-cancel="${r.id}" title="Bloquer cet envoi">×</button>` : ''}</td>
     </tr>`).join('') : `<tr><td colspan="8" class="muted" style="text-align:center;padding:28px">Aucune candidature${cs.filter || cs.q ? ' pour ce filtre' : ''}.</td></tr>`;
 
   const pages = Math.max(1, Math.ceil(d.total / 10));
   $('#cpPager').innerHTML = `<span>Affichage de ${d.total ? (cs.page - 1) * 10 + 1 : 0} à ${Math.min(cs.page * 10, d.total)} sur ${d.total}</span>
     <div class="pages">${Array.from({ length: pages }, (_, i) => i + 1).filter(p => p === 1 || p === pages || Math.abs(p - cs.page) <= 2).map(p => `<button class="${p === cs.page ? 'on' : ''}" data-p="${p}">${p}</button>`).join('')}</div>`;
   $$('#cpPager [data-p]').forEach(b => b.onclick = () => { cs.page = +b.dataset.p; loadTable(id); });
-  $$('[data-view]').forEach(b => b.onclick = () => showApplication(+b.dataset.view));
-  $$('[data-cancel]').forEach(b => b.onclick = async () => { if (!confirm('Annuler cet envoi ?')) return; await api(`/api/applications/${b.dataset.cancel}/cancel`, { method: 'POST' }); toast('Annulé'); loadTable(id); });
+  $$('[data-view]').forEach(b => b.onclick = () => showApplication(+b.dataset.view, () => { loadTable(id); loadReview(id); }));
+  $$('[data-cancel]').forEach(b => b.onclick = async () => { if (!confirm('Bloquer cet envoi ? Il ne partira pas.')) return; await api(`/api/applications/${b.dataset.cancel}/cancel`, { method: 'POST' }); toast('Bloqué'); loadTable(id); loadReview(id); });
 }
 
-async function showApplication(appId) {
+async function showApplication(appId, onChange) {
   let a = await api(`/api/applications/${appId}`);
+  let editing = false;
+  const pending = (st) => ['en_attente', 'a_valider', 'programme'].includes(st);
   const render = () => openModal(`
     <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start">
-      <div><p class="kicker">${esc(pretty(a.company_name))} · <span class="st ${a.status}">${APP_STATUS[a.status]}</span></p>
-        <h3>${esc(a.subject || 'Mail pas encore rédigé')}</h3>
-        <div class="muted" style="font-size:13px;margin-top:4px">À ${esc(a.email)}${a.sent_at ? ` · envoyé le ${fmtDay(a.sent_at)}` : a.scheduled_at ? ` · programmé ${fmtDate(a.scheduled_at)}` : ''}${a.opens ? ` · ouvert ${a.opens}×` : ''}</div></div>
+      <div style="flex:1;min-width:0"><p class="kicker">${esc(pretty(a.company_name))} · <span class="st ${a.status}">${APP_STATUS[a.status]}</span></p>
+        ${editing ? `<input class="input on-paper" id="mdSubject" value="${esc(a.subject || '')}" placeholder="Objet">` : `<h3>${esc(a.subject || 'Mail pas encore rédigé')}</h3>`}
+        <div class="muted" style="font-size:13px;margin-top:4px">À ${esc(a.email)}${a.sent_at ? ` · envoyé le ${fmtDay(a.sent_at)}` : a.scheduled_at ? ` · départ prévu ${fmtDate(a.scheduled_at)}` : ' · dans la file, rédigé avec le prochain lot'}${a.opens ? ` · ouvert ${a.opens}×` : ''}</div></div>
       <button class="btn btn-text" id="mdClose">×</button>
     </div>
-    ${a.company_brief ? `<div class="banner info" style="margin-top:16px;white-space:pre-line;display:block"><b>Enjeux compris</b>\n${esc(a.company_brief)}</div>` : ''}
-    <div class="mail-preview" style="margin-top:${a.company_brief ? 12 : 18}px;box-shadow:none;background:var(--card)">${a.body_text ? esc(a.body_text) : '<span class="muted">Le mail est rédigé au moment de l’envoi. Tu peux le rédiger maintenant pour le relire.</span>'}</div>
+    ${a.company_brief && !editing ? `<div class="banner info" style="margin-top:16px;white-space:pre-line;display:block"><b>Enjeux compris</b>\n${esc(a.company_brief)}</div>` : ''}
+    ${editing
+      ? `<textarea class="input on-paper" id="mdBody" style="min-height:300px;margin-top:14px">${esc(a.body_text || '')}</textarea>`
+      : `<div class="mail-preview" style="margin-top:${a.company_brief ? 12 : 18}px;box-shadow:none;background:var(--card)">${a.body_text ? esc(a.body_text) : '<span class="muted">Ce mail sera rédigé avec le prochain lot. Tu peux le rédiger maintenant pour le relire.</span>'}</div>`}
     ${a.error ? `<div class="banner danger" style="margin-top:12px"><span>${esc(a.error)}</span></div>` : ''}
-    <div style="display:flex;gap:8px;margin-top:18px;justify-content:flex-end">${a.status === 'programme' ? `<button class="btn btn-white" id="mdCompose">${a.body_text ? 'Rédiger à nouveau' : 'Rédiger maintenant'}</button>` : ''}</div>`);
-  render();
+    <div style="display:flex;gap:8px;margin-top:18px;justify-content:flex-end;flex-wrap:wrap">
+      ${editing ? `<button class="btn btn-text" id="mdCancelEdit">Annuler</button><button class="btn btn-accent" id="mdSave">Enregistrer</button>`
+      : pending(a.status) ? `<button class="btn btn-text btn-danger" id="mdBlock">Bloquer</button>
+          <button class="btn btn-white" id="mdCompose">${a.body_text ? 'Rédiger à nouveau' : 'Rédiger maintenant'}</button>
+          ${a.body_text ? `<button class="btn btn-white" id="mdEdit">✎ Modifier</button>` : ''}
+          ${a.status === 'a_valider' ? `<button class="btn btn-accent" id="mdValidate">✓ Valider l’envoi</button>` : ''}` : ''}
+    </div>`);
+  const changed = () => { if (onChange) onChange(); };
   const bind = () => {
     $('#mdClose').onclick = closeModal;
-    const c = $('#mdCompose'); if (c) c.onclick = async () => { c.disabled = true; c.textContent = 'Rédaction…'; try { a = await api(`/api/applications/${appId}/preview`, { method: 'POST' }); render(); bind(); } catch (e) { toast(e.message); } };
+    const on = (sel, fn) => { const el = $(sel); if (el) el.onclick = fn; };
+    on('#mdCompose', async () => { const c = $('#mdCompose'); c.disabled = true; c.textContent = 'Rédaction…';
+      try { a = await api(`/api/applications/${appId}/preview`, { method: 'POST' }); } catch (e) { toast(e.message); } render(); bind(); changed(); });
+    on('#mdEdit', () => { editing = true; render(); bind(); });
+    on('#mdCancelEdit', () => { editing = false; render(); bind(); });
+    on('#mdSave', async () => {
+      try { a = await api(`/api/applications/${appId}`, { method: 'PATCH', body: JSON.stringify({ subject: $('#mdSubject').value, body_text: $('#mdBody').value }) }); editing = false; toast('Mail modifié'); }
+      catch (e) { toast(e.message); } render(); bind(); changed(); });
+    on('#mdValidate', async () => { try { a = await api(`/api/applications/${appId}/validate`, { method: 'POST' }); toast('Validé — il partira à son créneau'); } catch (e) { toast(e.message); } render(); bind(); changed(); });
+    on('#mdBlock', async () => { if (!confirm('Bloquer cet envoi ? Il ne partira pas.')) return;
+      try { a = await api(`/api/applications/${appId}/cancel`, { method: 'POST' }); toast('Bloqué'); } catch (e) { toast(e.message); } render(); bind(); changed(); });
   };
-  bind();
+  render(); bind();
+}
+
+/* La file « à relire » : les mails rédigés qui attendent ton accord. */
+async function loadReview(id) {
+  const box = $('#cpReview'); if (!box) return;
+  let rows = [];
+  try { rows = (await api(`/api/campaigns/${id}/applications?status=a_valider&size=50`)).rows; } catch { return; }
+  if (!rows.length) { box.innerHTML = ''; return; }
+  const who = (r) => [r.first_name, r.last_name].filter(Boolean).join(' ') || r.email;
+  box.innerHTML = `<div class="card-white" style="padding:22px 24px;margin-bottom:22px;box-shadow:0 0 0 2px var(--logo-to), var(--shadow-soft)">
+    <div style="display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+      <div><h3>✋ ${rows.length} mail${rows.length > 1 ? 's' : ''} à relire avant départ</h3><div class="muted" style="font-size:13px">Rien ne part sans ton accord. Lis, corrige si besoin, valide — ou bloque.</div></div>
+      <button class="btn btn-accent" id="rvAll">✓ Tout valider (${rows.length})</button></div>
+    <div class="list" style="padding:0">${rows.map(r => `<div class="item" style="grid-template-columns:40px minmax(0,1fr) auto;align-items:start">
+        <div class="mono sm ${CAT_FAMILY[r.category] || ''}">${esc(monogram(r.company_name))}</div>
+        <div style="min-width:0"><div class="t" style="font-size:14px"><b>${esc(pretty(r.company_name))}</b> · ${esc(who(r))}${r.role_title ? ` <span class="muted">— ${esc(r.role_title.slice(0, 50))}</span>` : ''}</div>
+          <div class="s">départ prévu ${fmtDate(r.scheduled_at)} · <b style="color:var(--ink)">${esc(r.subject || '')}</b></div>
+          <details style="margin-top:6px"><summary class="muted" style="cursor:pointer;font-size:13px">Lire le mail</summary><div class="mail-preview" style="margin-top:8px;box-shadow:none;background:var(--card);font-size:13.5px">${esc(r.body_text || '')}</div></details></div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+          <button class="btn btn-white btn-sm" data-rv-view="${r.id}">✎ Modifier</button>
+          <button class="btn btn-text btn-sm btn-danger" data-rv-block="${r.id}">Bloquer</button>
+          <button class="btn btn-accent btn-sm" data-rv-ok="${r.id}">✓ Valider</button></div>
+      </div>`).join('')}</div></div>`;
+  const refresh = () => { loadReview(id); loadTable(id); };
+  $('#rvAll').onclick = async () => { if (!confirm(`Valider les ${rows.length} mails ? Ils partiront à leurs créneaux.`)) return; await api(`/api/campaigns/${id}/validate-all`, { method: 'POST' }); toast('Tous validés'); refresh(); };
+  $$('[data-rv-ok]').forEach(b => b.onclick = async () => { try { await api(`/api/applications/${b.dataset.rvOk}/validate`, { method: 'POST' }); toast('Validé'); } catch (e) { toast(e.message); } refresh(); });
+  $$('[data-rv-block]').forEach(b => b.onclick = async () => { if (!confirm('Bloquer cet envoi ?')) return; await api(`/api/applications/${b.dataset.rvBlock}/cancel`, { method: 'POST' }); toast('Bloqué'); refresh(); });
+  $$('[data-rv-view]').forEach(b => b.onclick = () => showApplication(+b.dataset.rvView, refresh));
 }
 
 async function campaignAction(c, act) {

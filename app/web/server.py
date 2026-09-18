@@ -157,6 +157,7 @@ async def _startup() -> None:
     # Envoi et détection des réponses tournent tant que le serveur est ouvert.
     BACKGROUND.append(asyncio.create_task(engine.sender_loop()))
     BACKGROUND.append(asyncio.create_task(engine.reply_loop()))
+    BACKGROUND.append(asyncio.create_task(engine.prepare_loop()))
 
 
 @app.on_event("shutdown")
@@ -516,7 +517,7 @@ async def outreach_export() -> FileResponse:
 # -------------------------------------------------------------- réglages ---
 
 SETTING_KEYS = ("sender_name", "signature", "profile_summary", "linkedin_url", "portfolio_url",
-                "subject_tpl", "body_tpl", "dry_run")
+                "subject_tpl", "body_tpl", "review_mode", "review_minutes", "dry_run")
 CV_DIR = DATA_DIR / "cv"
 
 
@@ -533,6 +534,7 @@ async def settings_get() -> dict:
         "claude": compose.claude_available(),
         "pixel": bool(PUBLIC_URL),
         "dry_run": engine.dry_run(),
+        "review": {"mode": engine.review_mode(), "minutes": engine.review_minutes()},
         "dry_run_forced": DRY_RUN,
         "caps": {"monthly": MONTHLY_CAP, "daily": DAILY_CAP},
         "variables": compose.VARIABLES,
@@ -760,7 +762,9 @@ async def campaigns_launch(campaign_id: int) -> dict:
     if not engine.dry_run() and not gmail.is_connected():
         raise HTTPException(status_code=400, detail="Connecte d'abord ton Gmail dans les réglages, "
                                                     "ou active le mode simulation")
-    return engine.launch(campaign_id)
+    result = engine.launch(campaign_id)
+    asyncio.create_task(engine.prepare_campaign(campaign_id))   # le premier lot, sans attendre la boucle
+    return result
 
 
 @app.post("/api/campaigns/{campaign_id}/pause")
@@ -884,13 +888,51 @@ async def application_preview(application_id: int) -> dict:
 
 @app.post("/api/applications/{application_id}/cancel")
 async def application_cancel(application_id: int) -> dict:
-    row = db.get_application(application_id)
-    if row is None:
+    """Bloque un envoi à venir (en file, à valider ou programmé)."""
+    try:
+        return engine.block(application_id)
+    except KeyError:
         raise HTTPException(status_code=404, detail="Candidature inconnue")
-    if row["status"] != "programme":
-        raise HTTPException(status_code=400, detail="Seule une candidature programmée peut être annulée")
-    db.update_application(application_id, status="annule")
-    return {"ok": True}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/applications/{application_id}/validate")
+async def application_validate(application_id: int) -> dict:
+    try:
+        return engine.validate(application_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Candidature inconnue")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+class ApplicationEdit(BaseModel):
+    subject: str | None = None
+    body_text: str | None = None
+
+
+@app.patch("/api/applications/{application_id}")
+async def application_edit(application_id: int, payload: ApplicationEdit) -> dict:
+    try:
+        return engine.edit(application_id, payload.subject, payload.body_text)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Candidature inconnue")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/campaigns/{campaign_id}/validate-all")
+async def campaign_validate_all(campaign_id: int) -> dict:
+    _campaign_or_404(campaign_id)
+    return {"validated": engine.validate_all(campaign_id)}
+
+
+@app.post("/api/campaigns/{campaign_id}/prepare")
+async def campaign_prepare(campaign_id: int) -> dict:
+    """Rédige tout de suite le prochain lot (sans attendre la boucle)."""
+    _campaign_or_404(campaign_id)
+    return {"prepared": await engine.prepare_campaign(campaign_id)}
 
 
 # ------------------------------------------------------ pixel d'ouverture ---

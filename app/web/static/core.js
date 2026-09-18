@@ -35,7 +35,7 @@ export const contactTags = (c) => [
     : '<span class="tag" title="Reconstituée depuis le motif maison, jamais vue en ligne">déduite</span>') : '',
   c.mx_ok === 0 ? '<span class="tag danger" title="Aucun serveur de messagerie déclaré">sans MX</span>' : '',
 ].join('');
-export const APP_STATUS = { programme: 'Programmé', envoye: 'Envoyé', ouvert: 'Ouvert', repondu: 'A répondu', echec: 'Échec', annule: 'Annulé' };
+export const APP_STATUS = { en_attente: 'En attente', a_valider: 'À valider', programme: 'Programmé', envoye: 'Envoyé', ouvert: 'Ouvert', repondu: 'A répondu', echec: 'Échec', annule: 'Annulé' };
 export const CAMP_STATUS = { brouillon: 'Brouillon', active: 'Active', en_pause: 'En pause', terminee: 'Terminée' };
 export const CAT_FAMILY = { metier: 'data', rh: 'biz', direction: 'tech', nominatif: 'ux' };
 export const SECTOR_FAMILY = {

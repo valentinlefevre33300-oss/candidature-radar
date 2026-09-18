@@ -250,7 +250,7 @@ def init_db(path: Path | None = None) -> None:
         _add_missing_columns(conn, "companies", {"tagline": "TEXT", "about": "TEXT", "brief": "TEXT"})
         _add_missing_columns(conn, "contacts", {"is_manager": "INTEGER DEFAULT 0", "linkedin_url": "TEXT"})
         _add_missing_columns(conn, "applications", {
-            "linkedin_url": "TEXT",
+            "linkedin_url": "TEXT", "prepared_at": "TEXT", "validated_at": "TEXT",
             "company_about": "TEXT", "company_brief": "TEXT",
             "reply_kind": "TEXT",            # refus | interet | question | absence | autre
             "reply_excerpt": "TEXT",         # début de la réponse, sans le texte cité
@@ -494,12 +494,17 @@ def all_settings() -> dict[str, str]:
 # ------------------------------------------------------------- campagnes ---
 
 CAMPAIGN_STATUSES = ("brouillon", "active", "en_pause", "terminee")
-APPLICATION_STATUSES = ("programme", "envoye", "ouvert", "repondu", "echec", "annule")
+# en_attente : dans la file, pas encore rédigée · a_valider : rédigée, attend ton accord ·
+# programme : partira à son créneau sauf blocage.
+APPLICATION_STATUSES = ("en_attente", "a_valider", "programme", "envoye", "ouvert", "repondu", "echec", "annule")
+PENDING_STATUSES = ("en_attente", "a_valider", "programme")
 SENT_STATUSES = ("envoye", "ouvert", "repondu")
 
 _CAMPAIGN_COUNTS = """
     (SELECT COUNT(*) FROM applications a WHERE a.campaign_id=c.id) AS total,
-    (SELECT COUNT(*) FROM applications a WHERE a.campaign_id=c.id AND a.status='programme') AS scheduled,
+    (SELECT COUNT(*) FROM applications a WHERE a.campaign_id=c.id
+        AND a.status IN ('en_attente','a_valider','programme')) AS scheduled,
+    (SELECT COUNT(*) FROM applications a WHERE a.campaign_id=c.id AND a.status='a_valider') AS to_review,
     (SELECT COUNT(*) FROM applications a WHERE a.campaign_id=c.id
         AND a.status IN ('envoye','ouvert','repondu')) AS sent,
     (SELECT COUNT(*) FROM applications a WHERE a.campaign_id=c.id AND a.opens > 0) AS opened,
@@ -583,7 +588,7 @@ def update_application(application_id: int, **fields) -> None:
     allowed = set(APPLICATION_FIELDS) | {"sent_at", "gmail_message_id", "gmail_thread_id",
                                          "opens", "last_open_at", "replied_at", "error",
                                          "reply_kind", "reply_excerpt", "last_reply_id",
-                                         "followups", "last_followup_at"}
+                                         "followups", "last_followup_at", "prepared_at", "validated_at"}
     changes = {k: v for k, v in fields.items() if k in allowed}
     if not changes:
         return
@@ -614,8 +619,10 @@ def list_applications(campaign_id: int, status: str | None = None, q: str = "",
         total = conn.execute(f"SELECT COUNT(*) FROM applications WHERE {clause}", params).fetchone()[0]
         rows = conn.execute(
             f"SELECT * FROM applications WHERE {clause} "
-            "ORDER BY CASE status WHEN 'repondu' THEN 0 WHEN 'ouvert' THEN 1 WHEN 'envoye' THEN 2 "
-            "WHEN 'programme' THEN 3 ELSE 4 END, COALESCE(sent_at, scheduled_at) DESC "
+            "ORDER BY CASE status WHEN 'a_valider' THEN 0 WHEN 'repondu' THEN 1 WHEN 'ouvert' THEN 2 "
+            "WHEN 'envoye' THEN 3 WHEN 'programme' THEN 4 ELSE 5 END, "
+            "CASE WHEN status IN ('a_valider','programme') THEN scheduled_at END ASC, "
+            "COALESCE(sent_at, scheduled_at) DESC "
             "LIMIT ? OFFSET ?", (*params, size, (page - 1) * size))
         return [dict(r) for r in rows], int(total)
 
@@ -628,6 +635,22 @@ def application_status_counts(campaign_id: int) -> dict[str, int]:
         for r in rows:
             counts[r["status"]] = r["n"]
         return counts
+
+
+def pending_prepared(campaign_id: int) -> list[dict]:
+    """Candidatures rédigées et pas encore parties (à valider ou programmées), par créneau."""
+    with connect() as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT * FROM applications WHERE campaign_id=? AND status IN ('a_valider','programme') "
+            "ORDER BY scheduled_at", (campaign_id,))]
+
+
+def queued_applications(campaign_id: int, limit: int) -> list[dict]:
+    """Les prochaines candidatures de la file, les mieux placées d'abord."""
+    with connect() as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT * FROM applications WHERE campaign_id=? AND status='en_attente' "
+            "ORDER BY score DESC, id LIMIT ?", (campaign_id, limit))]
 
 
 def due_applications(limit: int = 5) -> list[dict]:

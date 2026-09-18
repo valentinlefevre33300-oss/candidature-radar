@@ -89,6 +89,10 @@ export async function renderSettings() {
         </div>
         <label class="check"><button class="switch ${s.dry_run ? 'on' : ''}" id="dry" type="button" ${s.dry_run_forced ? 'disabled' : ''}></button>
           <span><b style="color:var(--ink)">Mode simulation</b> — toute la chaîne tourne, aucun mail ne part${s.dry_run_forced ? ' (forcé par CR_DRY_RUN)' : ''}</span></label>
+        <label class="check" style="margin-top:12px"><button class="switch ${s.review?.mode === 'manuel' ? 'on' : ''}" id="rvMode" type="button"></button>
+          <span><b style="color:var(--ink)">Relecture avant envoi</b> — les mails sont rédigés à l’avance, par lots quotidiens, et attendent ton accord. Désactivée : ils partent à leur créneau sauf si tu les bloques.</span></label>
+        <div class="field" style="margin-top:12px;max-width:340px"><label class="lbl">Délai minimum entre la rédaction et le premier départ</label>
+          <select class="input" id="rvDelay">${[30, 60, 120, 240, 480].map(m => `<option value="${m}" ${(s.review?.minutes || 60) === m ? 'selected' : ''}>${m < 120 ? m + ' min' : (m / 60) + ' h'}</option>`).join('')}</select></div>
         <div class="hint" style="margin-top:12px">Les plafonds, la clé Claude et l’URL publique se règlent dans <code>.env</code> (voir <code>.env.example</code>).</div>
       </section>
 
@@ -146,6 +150,8 @@ export async function renderSettings() {
     } catch (e) { toast(e.message); }
     test.disabled = false; test.textContent = '✉ M’envoyer un mail de test';
   };
+  $('#rvMode').onclick = async () => { const on = !$('#rvMode').classList.contains('on'); await api('/api/settings', { method: 'PUT', body: JSON.stringify({ review_mode: on ? 'manuel' : 'auto' }) }); $('#rvMode').classList.toggle('on', on); toast(on ? 'Relecture obligatoire avant envoi' : 'Départ automatique après le délai'); state.settings = null; };
+  $('#rvDelay').onchange = async (e) => { await api('/api/settings', { method: 'PUT', body: JSON.stringify({ review_minutes: e.target.value }) }); toast('Délai enregistré'); state.settings = null; };
   $('#dry').onclick = async () => { const on = !$('#dry').classList.contains('on'); await api('/api/settings', { method: 'PUT', body: JSON.stringify({ dry_run: on }) }); $('#dry').classList.toggle('on', on); toast(on ? 'Simulation activée' : 'Envois réels activés'); state.settings = null; window.refreshBadges && window.refreshBadges(); };
   $('#stSave').onclick = async () => { await api('/api/settings', { method: 'PUT', body: JSON.stringify({ sender_name: $('#stName').value, signature: $('#stSig').value, profile_summary: $('#stProfile').value, linkedin_url: $('#stLinkedin').value, portfolio_url: $('#stPortfolio').value }) }); toast('Enregistré'); state.settings = null; };
   $('#stCv').onchange = async (e) => { const f = e.target.files[0]; if (!f) return; const fd = new FormData(); fd.append('file', f);

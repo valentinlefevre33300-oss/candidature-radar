@@ -36,6 +36,8 @@ CATEGORY_RANK = {"metier": 0, "direction": 1, "rh": 2, "nominatif": 3, "generiqu
 EXCLUDED_CATEGORIES = {"juridique", "technique", "commercial"}
 SEND_WINDOW = (8, 19)      # heures locales : un mail à 3 h du matin sent le robot
 TICK_SECONDS = 20
+PREPARE_SECONDS = 60       # la boucle qui rédige à l'avance le lot du jour
+REVIEW_MINUTES = 60        # délai minimum entre la rédaction et le premier départ
 REPLY_SYNC_SECONDS = 600
 
 
@@ -168,7 +170,7 @@ def create(payload: dict) -> int:
         daily_cap=payload.get("daily_cap"),
     )
     for r in rows:
-        r["status"] = "programme"
+        r["status"] = "en_attente"   # rédigée et programmée plus tard, par lots
         r["token"] = secrets.token_urlsafe(12)
     db.add_applications(campaign_id, rows)
     db.add_event("creation", f"{len(rows)} candidature(s) préparée(s)", campaign_id=campaign_id)
@@ -177,8 +179,9 @@ def create(payload: dict) -> int:
 
 def _reschedule_pending(campaign: dict) -> int:
     """Redistribue les envois restants à partir de maintenant."""
-    pending, _ = db.list_applications(campaign["id"], status="programme", size=100000)
-    times = schedule_times(len(pending), daily_cap=campaign.get("daily_cap") or DAILY_CAP)
+    pending = db.pending_prepared(campaign["id"])
+    times = schedule_times(len(pending), daily_cap=campaign.get("daily_cap") or DAILY_CAP,
+                           start=datetime.now() + timedelta(minutes=review_minutes()))
     for row, when in zip(pending, times):
         db.update_application(row["id"], scheduled_at=when)
     return len(pending)
@@ -190,7 +193,9 @@ def launch(campaign_id: int) -> dict:
         raise KeyError(campaign_id)
     n = _reschedule_pending(campaign)
     db.update_campaign(campaign_id, status="active", launched_at=_now())
-    db.add_event("lancement", f"{n} envoi(s) programmé(s)", campaign_id=campaign_id)
+    queued = db.application_status_counts(campaign_id).get("en_attente", 0)
+    db.add_event("lancement", f"{queued + n} candidature(s) en file, rédigées par lots quotidiens",
+                 campaign_id=campaign_id)
     return db.get_campaign(campaign_id)
 
 
@@ -367,11 +372,162 @@ async def send_test(to: str, job_title: str, sample: dict | None = None) -> dict
             "sample": application.get("company_name")}
 
 
+# ------------------------------------------------------------ relecture ---
+
+def review_mode() -> str:
+    """« manuel » : chaque mail attend ton accord ; « auto » : il part à son créneau sauf blocage."""
+    return "auto" if db.get_setting("review_mode", "manuel") == "auto" else "manuel"
+
+
+def review_minutes() -> int:
+    try:
+        return max(5, int(db.get_setting("review_minutes", str(REVIEW_MINUTES))))
+    except ValueError:
+        return REVIEW_MINUTES
+
+
+def batch_needed(cap: int, sent_today: int, pending: int, after_hours: bool) -> int:
+    """Combien de mails rédiger maintenant pour que le lot du jour soit complet.
+
+    Après la fenêtre d'envoi, on prépare le lot du lendemain : ce qui est parti
+    aujourd'hui ne compte plus.
+    """
+    used = pending + (0 if after_hours else sent_today)
+    return max(0, cap - used)
+
+
+async def prepare_campaign(campaign_id: int) -> int:
+    """Rédige à l'avance le prochain lot d'une campagne active et lui donne ses créneaux.
+
+    Un lot = le plafond quotidien. Les mails rédigés attendent ton accord (mode
+    manuel) ou partent à leur créneau sauf blocage (mode auto), jamais avant le
+    délai de relecture.
+    """
+    campaign = db.get_campaign(campaign_id)
+    if campaign is None or campaign["status"] != "active":
+        return 0
+    cap = campaign.get("daily_cap") or DAILY_CAP
+    local_now = datetime.now().astimezone()
+    after_hours = local_now.hour >= SEND_WINDOW[1]
+    sent_today = db.sent_since(datetime.now(timezone.utc).strftime("%Y-%m-%d"), campaign_id)
+    pending = db.pending_prepared(campaign_id)
+    needed = batch_needed(cap, sent_today, len(pending), after_hours)
+    if needed <= 0:
+        return 0
+    queue = db.queued_applications(campaign_id, needed)
+    if not queue:
+        return 0
+
+    # Créneaux : après le dernier prévu, et jamais avant le délai de relecture.
+    start = datetime.now() + timedelta(minutes=review_minutes())
+    if pending and pending[-1].get("scheduled_at"):
+        last = datetime.fromisoformat(pending[-1]["scheduled_at"]).astimezone().replace(tzinfo=None)
+        start = max(start, last + timedelta(seconds=SEND_INTERVAL))
+    times = schedule_times(len(queue), daily_cap=cap, start=start)
+    settings = db.all_settings()
+    status = "a_valider" if review_mode() == "manuel" else "programme"
+    done = 0
+    for row, when in zip(queue, times):
+        current = db.get_application(row["id"])
+        if current is None or current["status"] != "en_attente":   # bloquée entre-temps
+            continue
+        if current.get("body_text"):   # déjà rédigé (ou retouché) depuis l'interface : on garde
+            db.update_application(row["id"], scheduled_at=when, status=status, prepared_at=_now())
+            done += 1
+            continue
+        try:
+            rendered = await compose.compose(row, campaign, settings,
+                                             personalize=bool(campaign.get("personalize")))
+        except Exception as exc:
+            log.warning("rédaction impossible pour %s : %s", row.get("email"), exc)
+            continue
+        db.update_application(row["id"], subject=rendered["subject"], body_text=rendered["body_text"],
+                              body_html=rendered["body_html"], hook=rendered["hook"],
+                              company_brief=rendered.get("brief"), scheduled_at=when,
+                              status=status, prepared_at=_now())
+        db.set_company_brief(row.get("company_siren"), rendered.get("brief"))
+        done += 1
+    if done:
+        db.add_event("preparation",
+                     f"{done} mail(s) rédigé(s), " + ("à relire avant départ" if status == "a_valider"
+                                                       else "programmés (bloque ce que tu ne veux pas)"),
+                     campaign_id=campaign_id)
+    return done
+
+
+async def prepare_loop() -> None:
+    log.info("boucle de préparation démarrée")
+    while True:
+        try:
+            for campaign in db.list_campaigns():
+                if campaign["status"] == "active":
+                    await prepare_campaign(campaign["id"])
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("boucle de préparation : erreur ignorée")
+        await asyncio.sleep(PREPARE_SECONDS)
+
+
+def validate(application_id: int) -> dict:
+    """Donne le feu vert : le mail partira à son créneau (tout de suite s'il est passé)."""
+    row = db.get_application(application_id)
+    if row is None:
+        raise KeyError(application_id)
+    if row["status"] != "a_valider":
+        raise ValueError("Cette candidature n'attend pas de validation")
+    when = row.get("scheduled_at") or _now()
+    db.update_application(application_id, status="programme", validated_at=_now(), scheduled_at=when)
+    return db.get_application(application_id)
+
+
+def validate_all(campaign_id: int) -> int:
+    rows = [r for r in db.pending_prepared(campaign_id) if r["status"] == "a_valider"]
+    for row in rows:
+        validate(row["id"])
+    if rows:
+        db.add_event("validation", f"{len(rows)} mail(s) validé(s)", campaign_id=campaign_id)
+    return len(rows)
+
+
+def block(application_id: int) -> dict:
+    """Bloque un envoi tant qu'il n'est pas parti."""
+    row = db.get_application(application_id)
+    if row is None:
+        raise KeyError(application_id)
+    if row["status"] not in db.PENDING_STATUSES:
+        raise ValueError("Seul un envoi à venir peut être bloqué")
+    db.update_application(application_id, status="annule")
+    db.add_event("blocage", f"{row.get('company_name')} : envoi bloqué", campaign_id=row["campaign_id"],
+                 application_id=application_id)
+    _close_if_done(row["campaign_id"])
+    return db.get_application(application_id)
+
+
+def edit(application_id: int, subject: str | None, body_text: str | None) -> dict:
+    """Retouche un mail avant son départ ; la version HTML est régénérée."""
+    row = db.get_application(application_id)
+    if row is None:
+        raise KeyError(application_id)
+    if row["status"] not in db.PENDING_STATUSES:
+        raise ValueError("Ce mail est déjà parti")
+    changes: dict = {}
+    if subject is not None:
+        changes["subject"] = subject.strip()
+    if body_text is not None:
+        changes["body_text"] = body_text.strip()
+        changes["body_html"] = compose.to_html(changes["body_text"], compose.pixel_url(row.get("token")))
+    if changes:
+        db.update_application(application_id, **changes)
+    return db.get_application(application_id)
+
+
 def _close_if_done(campaign_id: int) -> None:
     campaign = db.get_campaign(campaign_id)
     if campaign and campaign["status"] == "active" and campaign["scheduled"] == 0:
         db.update_campaign(campaign_id, status="terminee")
-        db.add_event("fin", "tous les envois sont partis", campaign_id=campaign_id)
+        detail = "tous les envois sont partis" if campaign.get("sent") else "plus rien à envoyer (tout a été bloqué)"
+        db.add_event("fin", detail, campaign_id=campaign_id)
 
 
 async def tick() -> None:

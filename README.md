@@ -78,7 +78,14 @@ Puis <http://localhost:8010>. Quatre espaces :
   déclarés, « déjà contactée » ; filtre par secteur ou par texte, tout cocher / décocher,
   « charger 100 de plus » — seules les entreprises cochées sont explorées) →
   personnes retenues (décochables, **export CSV de la sélection**) → CV → mail (variables
-  surlignées, aperçu rédigé pour la première entreprise) → récap et lancement. Chaque campagne a sa page :
+  surlignées, aperçu rédigé pour la première entreprise) → récap et lancement.
+  **Rien ne part d'un coup** : les candidatures entrent dans une file, et chaque jour un
+  lot (le plafond quotidien) est rédigé à l'avance par Claude, avec un créneau chacun
+  (un toutes les ~4 minutes, 8 h – 19 h, jamais avant le délai de relecture). En mode
+  **relecture** (par défaut), chaque mail attend ton accord — la page de campagne
+  affiche la file « à relire » : lire, modifier, valider, bloquer, ou tout valider. Sans
+  relecture, le mail part à son créneau sauf si tu le bloques avant. Le lot du lendemain
+  se prépare le soir, après la fenêtre d'envoi. Chaque campagne a sa page :
   complétion, journal, « à relancer en priorité » (les personnes qui ouvrent sans
   répondre), table des candidatures paginée avec statut, « voir le mail », LinkedIn.
 - **Tableau de bord** — envoyés, ouverts, réponses, et la nature des réponses
@@ -95,9 +102,10 @@ Puis <http://localhost:8010>. Quatre espaces :
   campagne. Le CLI accepte encore `--dept` et `--cp`.
 - **Suivi** — le suivi manuel : personnes marquées à la main (à contacter → contacté →
   relancé → a répondu), note, export CSV.
-- **Réglages** — connexion Gmail, nom et signature, résumé de profil pour la rédaction,
-  CV, plafonds, et l'interrupteur **mode simulation** : toute la chaîne tourne, aucun
-  mail ne part. Commence par là.
+- **Réglages** — connexion Gmail, nom, signature, LinkedIn et portfolio, résumé de profil
+  pour la rédaction, CV, ton modèle de mail, plafonds, l'interrupteur **relecture avant
+  envoi** (et son délai), et le **mode simulation** : toute la chaîne tourne, aucun mail
+  ne part. Commence par là.
 
 L'interface reprend le système de design de [Le Brief](https://veille-tech-543e9e.fly.dev/) :
 blanc, cartes grises sans bordure, titres en Fraunces, corps en Poppins, un seul accent indigo.

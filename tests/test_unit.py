@@ -437,6 +437,15 @@ check(attach(_cs, _links) == 1 and _cs[0].linkedin_url == "https://www.linkedin.
       "rattachement aux seules personnes nommees")
 
 # --------------------------------------------------------------------------
+print("\n# Envoi progressif : taille des lots")
+from app.campaigns import batch_needed
+check(batch_needed(25, 0, 0, False) == 25, "campagne lancee le matin : le lot du jour entier")
+check(batch_needed(25, 10, 5, False) == 10, "10 partis, 5 rediges : on complete a 25")
+check(batch_needed(25, 25, 0, False) == 0, "plafond du jour atteint : rien de plus")
+check(batch_needed(25, 25, 3, True) == 22, "apres 19 h : on prepare le lendemain, les envois du jour ne comptent plus")
+check(batch_needed(25, 0, 30, False) == 0, "deja plus de rediges que le plafond : rien")
+
+# --------------------------------------------------------------------------
 print("\n" + "=" * 62)
 if FAILURES:
     print(f"{len(FAILURES)} ECHEC(S) :")
