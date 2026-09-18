@@ -28,7 +28,7 @@ from .. import auth, compose, db, geo, gmail
 from ..config import (APP_PASSWORD, APP_USER, BASE_URL, DAILY_CAP, DATA_DIR, DRY_RUN, MONTHLY_CAP,
                       PUBLIC_URL, REQUIRE_LOGIN)
 from ..models import Company, SearchQuery
-from ..naf import catalogue, codes_for, label_for_code, sector_for_code
+from ..naf import DOMAIN_MIN_HEADCOUNT, catalogue, codes_for, label_for_code, min_headcount_for, sector_for_code
 from ..sources.sirene import count_companies, search_companies
 from ..resolve import linkedin as linkedin_lookup
 from ..pipeline import run_search
@@ -283,6 +283,7 @@ async def start_search(payload: SearchPayload) -> dict:
         )
 
     cities = [c for c in payload.cities if c.get("code")]
+    floor = min_headcount_for(payload.job_title)   # un product owner n'existe pas sous 10 salariés
     query = SearchQuery(
         job_title=payload.job_title.strip(),
         keywords=payload.keywords.strip(),
@@ -291,7 +292,7 @@ async def start_search(payload: SearchPayload) -> dict:
         cities=cities,
         agglomeration=payload.agglomeration,
         naf_codes=list(dict.fromkeys(naf)),
-        min_headcount=payload.min_headcount,
+        min_headcount=max(payload.min_headcount or 0, floor) or None,
         max_headcount=payload.max_headcount,
         limit=payload.limit,
     )
@@ -436,6 +437,7 @@ async def find_linkedin(run_id: int, payload: LinkedinPayload) -> dict:
 
 
 class ExplorePayload(BaseModel):
+    job_title: str = ""
     sectors: list[str] = Field(default_factory=list)
     naf_codes: list[str] = Field(default_factory=list)
     keywords: str = ""
@@ -459,7 +461,8 @@ async def explore_companies(payload: ExplorePayload) -> dict:
         department=(payload.department or "").strip() or None,
         postal_code=(payload.postal_code or "").strip() or None,
         cities=[c for c in payload.cities if c.get("code")], agglomeration=payload.agglomeration,
-        naf_codes=list(dict.fromkeys(naf)), min_headcount=payload.min_headcount,
+        naf_codes=list(dict.fromkeys(naf)),
+        min_headcount=max(payload.min_headcount or 0, min_headcount_for(payload.job_title)) or None,
         max_headcount=payload.max_headcount, limit=payload.limit,
     )
     async with httpx.AsyncClient(follow_redirects=True) as client:
@@ -562,6 +565,7 @@ async def settings_get() -> dict:
         "pixel": bool(PUBLIC_URL),
         "dry_run": engine.dry_run(),
         "review": {"mode": engine.review_mode(), "minutes": engine.review_minutes()},
+        "headcount_floors": DOMAIN_MIN_HEADCOUNT,
         "dry_run_forced": DRY_RUN,
         "caps": {"monthly": MONTHLY_CAP, "daily": DAILY_CAP},
         "variables": compose.VARIABLES,

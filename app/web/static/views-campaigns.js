@@ -93,7 +93,7 @@ export async function renderWizard() {
   if (!state.wizard || (runId && state.wizard.runId !== +runId)) {
     const s = state.settings || {};
     state.wizard = { step: 0, job: '', ...defaultZone(), head: 'pme', min: '', max: '', market: null, sectors: new Set(),
-                     showAll: false, companies: [], picked: new Set(), total: 0, cq: '', csec: 'all', loading: false,
+                     showAll: false, companies: [], picked: new Set(), total: 0, cq: '', csec: 'all', loading: false, floor: 1, addq: '', added: [],
                      runId: null, recipients: [], chosen: new Set(), excluded: {}, fitOnly: true,
                      cv: s.settings?.cv_path || '', cvName: s.cv_name || '',
                      linkedin: s.settings?.linkedin_url || '', portfolio: s.settings?.portfolio_url || '',
@@ -131,7 +131,7 @@ async function loadCompanies(more) {
   w.loading = true; if (more) drawWizard();
   try {
     const data = await api('/api/companies', { method: 'POST', body: JSON.stringify({
-      sectors: [...w.sectors], cities: w.cities, agglomeration: w.agglo,
+      job_title: w.job.trim(), sectors: [...w.sectors], cities: w.cities, agglomeration: w.agglo,
       limit: (more ? w.companies.length : 0) + 100, ...headcountRange(w.head, w.min, w.max) }) });
     if (more) {
       const seen = new Set(w.companies.map(c => c.siren));
@@ -166,7 +166,8 @@ function drawWizard() {
         <label class="check" style="margin-top:6px"><button type="button" class="switch ${w.agglo ? 'on' : ''}" id="wzAgglo"></button><span>Inclure toute l’agglomération <span class="muted">(Bordeaux → les 28 communes de la métropole)</span></span></label>
         <div class="hint">Bordeaux et sa métropole par défaut. Plusieurs villes possibles ; aucune = toute la France.</div>
       </div>
-      <div class="field" style="margin-bottom:20px"><span class="lbl">Taille</span><div class="pills on-paper" id="wzHead">${HEADCOUNT.filter(h => h.key !== 'custom').map(h => `<button class="pill ${w.head === h.key ? 'on' : ''}" data-k="${h.key}">${h.label}</button>`).join('')}</div></div>`;
+      <div class="field" style="margin-bottom:20px"><span class="lbl">Taille</span><div class="pills on-paper" id="wzHead">${HEADCOUNT.filter(h => h.key !== 'custom').map(h => `<button class="pill ${w.head === h.key ? 'on' : ''}" data-k="${h.key}">${h.label}</button>`).join('')}</div>
+        <div class="hint">Les entreprises trop petites pour avoir ce poste sont écartées d’office (un product owner : 10 salariés au moins), quel que soit le choix.</div></div>`;
     foot = `<button class="btn btn-accent btn-lg btn-block" id="wzNext">Analyser le marché</button><span class="hint" id="wzHint"></span>`;
   }
 
@@ -204,6 +205,7 @@ function drawWizard() {
         <span class="grow"></span>
         <input class="input" id="wzCq" placeholder="Filtrer : nom, ville, dirigeant…" value="${esc(w.cq)}" style="max-width:260px">
       </div>
+      <div class="picker" style="margin-bottom:10px;max-width:520px"><input class="input" id="wzAddCo" placeholder="➕ Ajouter une entreprise par son nom (ex. Betclic, Ubisoft Bordeaux…)" value="${esc(w.addq)}" autocomplete="off"><div class="drop hidden" id="wzAddDrop"></div></div>
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
         <button class="btn btn-white btn-sm" id="wzAll">Tout cocher (${visible.length})</button>
         <button class="btn btn-white btn-sm" id="wzNone" ${n ? '' : 'disabled'}>Tout décocher (${n})</button>
@@ -352,6 +354,19 @@ function bindWizard() {
     $('#wzAll').onclick = () => { visible().forEach(x => w.picked.add(x)); drawWizard(); };
     $('#wzNone').onclick = () => { w.picked.clear(); drawWizard(); };
     const more = $('#wzMoreCo'); if (more) more.onclick = () => loadCompanies(true);
+    const add = $('#wzAddCo'), drop = $('#wzAddDrop'); let addTimer;
+    add.oninput = () => { w.addq = add.value; clearTimeout(addTimer); const q = add.value.trim(); if (q.length < 3) { drop.classList.add('hidden'); return; }
+      addTimer = setTimeout(async () => {
+        let found = [];
+        try { found = (await api('/api/companies', { method: 'POST', body: JSON.stringify({ job_title: w.job.trim(), keywords: q, cities: w.cities, agglomeration: w.agglo, limit: 8, ...headcountRange(w.head, w.min, w.max) }) })).companies; } catch (e) { toast(e.message); }
+        const known = new Set(w.companies.map(c => c.siren));
+        drop.innerHTML = found.length ? found.map(c => `<div class="opt" data-s="${esc(c.siren)}"><b>${esc(pretty(c.name))}</b> <span class="muted">${esc([c.city, c.size, c.sector_label].filter(Boolean).join(' · '))}${known.has(c.siren) ? ' · déjà dans la liste' : ''}</span></div>`).join('')
+          : '<div class="opt muted">Aucune entreprise de ce nom dans la zone (avec l’effectif requis).</div>';
+        drop.classList.remove('hidden');
+        $$('#wzAddDrop .opt[data-s]').forEach(o => o.onclick = () => { const c = found.find(x => x.siren === o.dataset.s); if (!c) return;
+          if (!known.has(c.siren)) { w.companies.unshift(c); w.total += 1; } w.picked.add(c.siren); w.addq = ''; w.cq = ''; w.csec = 'all'; toast(`${pretty(c.name)} ajoutée et cochée`); drawWizard(); });
+      }, 350); };
+    add.onkeydown = (e) => { if (e.key === 'Escape') drop.classList.add('hidden'); };
     $$('#wzFirms input[type=checkbox]').forEach(c => c.onchange = () => {
       c.checked ? w.picked.add(c.dataset.s) : w.picked.delete(c.dataset.s);
       const n = w.picked.size; const b = $('#wzNext'); b.disabled = !n;

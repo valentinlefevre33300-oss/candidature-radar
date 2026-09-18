@@ -106,6 +106,20 @@ DOMAIN_SECTORS: dict[str, list[str]] = {
 }
 
 
+# En dessous de cet effectif, le métier n'existe pas dans l'entreprise : inutile
+# d'y chercher un interlocuteur, et encore moins de le compter.
+DOMAIN_MIN_HEADCOUNT: dict[str, int] = {
+    "produit": 10, "projet": 10, "rh": 10, "finance": 10, "juridique": 10, "ops": 10,
+    "tech": 3, "design": 3, "marketing": 3, "commercial": 3, "support": 3,
+}
+
+
+def min_headcount_for(job_title: str) -> int:
+    """Effectif minimum où le poste visé a un sens (1 = pas d'avis)."""
+    from .domains import job_domain
+    return DOMAIN_MIN_HEADCOUNT.get(job_domain(job_title or "") or "", 1)
+
+
 def relevant_sectors(job_title: str) -> list[str] | None:
     """Les secteurs à présélectionner pour ce poste ; None = pas d'avis (tout)."""
     from .domains import job_domain   # import tardif : domains importe naf

@@ -471,6 +471,14 @@ from app.sources.sirene import headcount_codes
 check("00" not in headcount_codes(1, None) and "11" in headcount_codes(1, None), "toutes tailles = au moins un salarie (jamais 0 ni non renseigne)")
 
 # --------------------------------------------------------------------------
+print("\n# Plancher d'effectif selon le poste")
+from app.naf import min_headcount_for
+check(min_headcount_for("Product owner") == 10, "product owner : 10 salaries au moins")
+check(min_headcount_for("developpeur python") == 3, "developpeur : 3 salaries au moins")
+check(min_headcount_for("plombier") == 1, "poste sans avis : pas de plancher")
+check(max(0, min_headcount_for("Product owner")) == 10 and max(20, min_headcount_for("Product owner")) == 20, "le plancher ne rabaisse jamais un minimum plus haut")
+
+# --------------------------------------------------------------------------
 print("\n" + "=" * 62)
 if FAILURES:
     print(f"{len(FAILURES)} ECHEC(S) :")
