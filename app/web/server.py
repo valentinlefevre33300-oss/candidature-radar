@@ -109,10 +109,17 @@ async def _guard(request, call_next):
 @app.middleware("http")
 async def _revalidate_static(request, call_next):
     """Les modules JS sont importés sans suffixe de version : sans cet en-tête,
-    le navigateur resservait un `core.js` périmé à côté de vues à jour."""
+    le navigateur resservait un `core.js` périmé à côté de vues à jour.
+
+    `private, no-store` plutôt que `no-cache` : derrière Cloudflare, `no-cache`
+    était remplacé par un `max-age` de quatre heures (« Browser Cache TTL »),
+    et le téléphone gardait une interface périmée après chaque mise à jour.
+    """
     response = await call_next(request)
-    if request.url.path == "/" or request.url.path.startswith("/static/"):
-        response.headers["Cache-Control"] = "no-cache"
+    path = request.url.path
+    if path == "/" or path == "/login" or path.startswith("/static/"):
+        response.headers["Cache-Control"] = "private, no-store, max-age=0"
+        response.headers["CDN-Cache-Control"] = "no-store"
     return response
 
 
