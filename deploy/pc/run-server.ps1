@@ -1,4 +1,4 @@
-# Lance le serveur Candidature Radar sur le PC (appelé par la tâche planifiée
+﻿# Lance le serveur Candidature Radar sur le PC (appelé par la tâche planifiée
 # « Candidature Radar - serveur » à l'ouverture de session).
 # Écoute seulement en local : c'est le tunnel Cloudflare qui l'expose sur leradar.site.
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)   # deploy\pc -> racine du projet

@@ -1,4 +1,4 @@
-# Arrête et supprime les deux tâches planifiées (serveur + tunnel).
+﻿# Arrête et supprime les deux tâches planifiées (serveur + tunnel).
 foreach ($name in @("Candidature Radar - serveur", "Candidature Radar - tunnel")) {
     if (Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue) {
         Stop-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
