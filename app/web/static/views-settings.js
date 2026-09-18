@@ -63,6 +63,11 @@ export async function renderSettings() {
         <div class="muted" style="font-size:13px;margin:4px 0 16px">Ce que voient les recruteurs, et ce que Claude sait de toi pour rédiger.</div>
         <div class="field" style="margin-bottom:12px"><label class="lbl">Ton nom</label><input class="input on-paper" id="stName" value="${esc(v.sender_name)}" placeholder="Prénom Nom"></div>
         <div class="field" style="margin-bottom:12px"><label class="lbl">Signature</label><textarea class="input on-paper" id="stSig" style="min-height:90px" placeholder="Prénom Nom&#10;06 …&#10;linkedin.com/in/…">${esc(v.signature)}</textarea></div>
+        <div class="grid-3" style="grid-template-columns:1fr 1fr;margin-bottom:12px">
+          <div class="field"><label class="lbl">LinkedIn</label><input class="input on-paper" id="stLinkedin" value="${esc(v.linkedin_url)}" placeholder="linkedin.com/in/…"></div>
+          <div class="field"><label class="lbl">Portfolio</label><input class="input on-paper" id="stPortfolio" value="${esc(v.portfolio_url)}" placeholder="https://…"></div>
+        </div>
+        <div class="hint" style="margin:-4px 0 12px">Insérés dans les mails par <b>{liens}</b> (ou séparément par {linkedin} et {portfolio}), cliquables.</div>
         <div class="field" style="margin-bottom:14px"><label class="lbl">Ton profil en quelques lignes</label><textarea class="input on-paper" id="stProfile" style="min-height:120px" placeholder="Ex. Développeur Python, 2 ans d’expérience en back-end (FastAPI, PostgreSQL), à l’aise en data. Cherche un poste à Bordeaux dans une équipe produit.">${esc(v.profile_summary)}</textarea>
           <div class="hint">Sert uniquement à la rédaction du paragraphe personnalisé. À défaut, le texte du CV est utilisé.</div></div>
         <button class="btn btn-primary" id="stSave">Enregistrer</button>
@@ -95,7 +100,7 @@ export async function renderSettings() {
     test.disabled = false; test.textContent = '✉ M’envoyer un mail de test';
   };
   $('#dry').onclick = async () => { const on = !$('#dry').classList.contains('on'); await api('/api/settings', { method: 'PUT', body: JSON.stringify({ dry_run: on }) }); $('#dry').classList.toggle('on', on); toast(on ? 'Simulation activée' : 'Envois réels activés'); state.settings = null; window.refreshBadges && window.refreshBadges(); };
-  $('#stSave').onclick = async () => { await api('/api/settings', { method: 'PUT', body: JSON.stringify({ sender_name: $('#stName').value, signature: $('#stSig').value, profile_summary: $('#stProfile').value }) }); toast('Enregistré'); state.settings = null; };
+  $('#stSave').onclick = async () => { await api('/api/settings', { method: 'PUT', body: JSON.stringify({ sender_name: $('#stName').value, signature: $('#stSig').value, profile_summary: $('#stProfile').value, linkedin_url: $('#stLinkedin').value, portfolio_url: $('#stPortfolio').value }) }); toast('Enregistré'); state.settings = null; };
   $('#stCv').onchange = async (e) => { const f = e.target.files[0]; if (!f) return; const fd = new FormData(); fd.append('file', f);
     try { await upload('/api/settings/cv', fd); toast('CV importé'); renderSettings(); } catch (err) { toast(err.message); } };
 }

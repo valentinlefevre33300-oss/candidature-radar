@@ -405,6 +405,20 @@ check(len(_co.directors) == 1 and _co.directors[0].display == "Marie Dupont", "d
 check(not hasattr(_co, "sector_label"), "les champs d'affichage ne polluent pas le modele")
 
 # --------------------------------------------------------------------------
+print("\n# LinkedIn et portfolio dans le mail")
+from app.compose import build_context as _bc, render as _render, to_html as _html, normalize_url, links_block
+_ctx = _bc({"first_name": "Ana", "last_name": "Lima", "company_name": "ACME SAS"}, {"job_title": "PO"},
+           {"sender_name": "Valentin", "linkedin_url": "linkedin.com/in/valentin", "portfolio_url": ""})
+check(_ctx["linkedin"] == "https://linkedin.com/in/valentin", "adresse LinkedIn completee avec https://")
+check(_ctx["liens"] == "LinkedIn : https://linkedin.com/in/valentin", "bloc liens : seulement ce qui est renseigne")
+check(links_block("", "") == "" and normalize_url("  ") == "", "sans liens : rien, pas de ligne vide")
+_txt = _render("Bien cordialement,\n{signature}\n{liens}", _ctx)
+check(_txt.endswith("Valentin\nLinkedIn : https://linkedin.com/in/valentin"), "liens sous la signature")
+_h = _html(_txt)
+check('<a href="https://linkedin.com/in/valentin"' in _h, "lien cliquable dans le HTML")
+check("<a" not in _html("Un texte sans adresse <script>"), "pas de lien invente, HTML echappe")
+
+# --------------------------------------------------------------------------
 print("\n" + "=" * 62)
 if FAILURES:
     print(f"{len(FAILURES)} ECHEC(S) :")

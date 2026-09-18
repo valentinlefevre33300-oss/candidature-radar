@@ -96,6 +96,7 @@ export async function renderWizard() {
                      showAll: false, companies: [], picked: new Set(), total: 0, cq: '', csec: 'all', loading: false,
                      runId: null, recipients: [], chosen: new Set(), excluded: {},
                      cv: s.settings?.cv_path || '', cvName: s.cv_name || '',
+                     linkedin: s.settings?.linkedin_url || '', portfolio: s.settings?.portfolio_url || '',
                      subject: s.defaults?.subject || '', body: s.defaults?.body || '', personalize: !!s.claude, preview: null, busy: false };
     if (runId) {
       try {
@@ -269,6 +270,11 @@ function drawWizard() {
       <div class="sub" style="color:var(--muted);margin:10px 0 22px">Les <mark style="background:var(--ux);color:var(--ux-ink);padding:0 4px;border-radius:4px">{variables}</mark> se remplissent pour chaque entreprise. <b style="color:var(--ink)">{accroche}</b> est le paragraphe rédigé sur mesure.</div>
       <div class="field" style="margin-bottom:16px"><label class="lbl">Objet</label><input class="input on-paper" id="wzSubject" value="${esc(w.subject)}"></div>
       <div class="field" style="margin-bottom:12px"><label class="lbl">Corps</label><textarea class="input on-paper" id="wzBody">${esc(w.body)}</textarea></div>
+      <div class="grid-3" style="grid-template-columns:1fr 1fr;margin-bottom:6px">
+        <div class="field"><label class="lbl">Ton LinkedIn</label><input class="input on-paper" id="wzLinkedin" value="${esc(w.linkedin)}" placeholder="linkedin.com/in/…"></div>
+        <div class="field"><label class="lbl">Ton portfolio</label><input class="input on-paper" id="wzPortfolio" value="${esc(w.portfolio)}" placeholder="https://…"></div>
+      </div>
+      <div class="hint" style="margin-bottom:14px">Placés par <b>{liens}</b> sous la signature, cliquables dans le mail. Gardés pour les prochaines campagnes.</div>
       <div class="pills" style="margin-bottom:18px">${Object.keys(s.variables || {}).map(v => `<button class="pill" data-var="${v}" title="${esc(s.variables[v])}" style="background:var(--card)">{${v}}</button>`).join('')}</div>
       <label class="check" style="margin-bottom:22px"><button class="switch ${w.personalize ? 'on' : ''}" id="wzPers" type="button" ${s.claude ? '' : 'disabled'}></button>
         <span>Paragraphe <b style="color:var(--ink)">{accroche}</b> rédigé par Claude pour chaque entreprise${s.claude ? '' : ' — <b style="color:var(--ux-ink)">clé API absente</b>, repli sur des phrases par règles'}</span></label>
@@ -404,6 +410,9 @@ function bindWizard() {
     $$('[data-var]').forEach(b => b.onclick = () => { const ta = $('#wzBody'); const v = `{${b.dataset.var}}`;
       const s = ta.selectionStart; ta.value = ta.value.slice(0, s) + v + ta.value.slice(ta.selectionEnd); w.body = ta.value; ta.focus(); ta.selectionEnd = s + v.length; });
     const pers = $('#wzPers'); pers.onclick = () => { w.personalize = !w.personalize; pers.classList.toggle('on', w.personalize); };
+    const saveLinks = async () => { try { await api('/api/settings', { method: 'PUT', body: JSON.stringify({ linkedin_url: w.linkedin, portfolio_url: w.portfolio }) }); state.settings = null; w.preview = null; } catch (e) { toast(e.message); } };
+    $('#wzLinkedin').oninput = e => w.linkedin = e.target.value; $('#wzLinkedin').onchange = saveLinks;
+    $('#wzPortfolio').oninput = e => w.portfolio = e.target.value; $('#wzPortfolio').onchange = saveLinks;
     $('#wzPreview').onclick = async () => {
       const first = w.recipients.find(r => w.chosen.has(r.email)); if (!first) return;
       $('#wzPreview').disabled = true; $('#wzPreview').textContent = 'Rédaction…';

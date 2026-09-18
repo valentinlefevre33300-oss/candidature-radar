@@ -43,6 +43,9 @@ VARIABLES: dict[str, str] = {
     "taille": "tranche d'effectif",
     "moi": "ton nom",
     "signature": "ta signature (réglages)",
+    "linkedin": "l'adresse de ton profil LinkedIn (réglages)",
+    "portfolio": "l'adresse de ton portfolio (réglages)",
+    "liens": "LinkedIn et portfolio sur deux lignes, seulement ceux qui sont renseignés",
 }
 
 DEFAULT_SUBJECT = "Candidature spontanée — {poste} — {moi}"
@@ -55,7 +58,8 @@ DEFAULT_BODY = """{salutation}
 Vous trouverez mon CV en pièce jointe. Je reste à votre entière disposition pour en échanger.
 
 Bien cordialement,
-{signature}"""
+{signature}
+{liens}"""
 
 LEGAL_NOISE = {"sas", "sasu", "sarl", "eurl", "sa", "sci", "snc", "scop", "groupe", "group",
                "societe", "société", "ste", "holding", "cie", "compagnie", "ets", "etablissements"}
@@ -82,6 +86,8 @@ def build_context(application: dict, campaign: dict, settings: dict) -> dict[str
     last = (application.get("last_name") or "").strip()
     name = " ".join(part for part in (first, last) if part)
     me = settings.get("sender_name") or ""
+    linkedin = normalize_url(settings.get("linkedin_url"))
+    portfolio = normalize_url(settings.get("portfolio_url"))
     return {
         "salutation": f"Bonjour {name}," if name else "Bonjour,",
         "prenom": first,
@@ -93,7 +99,38 @@ def build_context(application: dict, campaign: dict, settings: dict) -> dict[str
         "taille": application.get("company_size") or "",
         "moi": me,
         "signature": settings.get("signature") or me,
+        "linkedin": linkedin,
+        "portfolio": portfolio,
+        "liens": links_block(linkedin, portfolio),
     }
+
+
+def normalize_url(value: str | None) -> str:
+    """Une adresse propre, avec son schéma, ou rien."""
+    value = (value or "").strip()
+    if not value:
+        return ""
+    if not re.match(r"^https?://", value, re.I):
+        value = "https://" + value
+    return value
+
+
+def links_block(linkedin: str, portfolio: str) -> str:
+    """Les liens du candidat, une ligne chacun, seulement s'ils existent."""
+    lines = []
+    if linkedin:
+        lines.append(f"LinkedIn : {linkedin}")
+    if portfolio:
+        lines.append(f"Portfolio : {portfolio}")
+    return "\n".join(lines)
+
+
+_URL_RE = re.compile(r"https?://[^\s<>&\"]+")
+
+
+def linkify(escaped: str) -> str:
+    """Rend cliquables les adresses d'un texte déjà échappé pour le HTML."""
+    return _URL_RE.sub(lambda m: f'<a href="{m.group(0)}" style="color:#4f46e5">{m.group(0)}</a>', escaped)
 
 
 def render(template: str, context: dict[str, str]) -> str:
@@ -373,7 +410,8 @@ FOLLOWUP_BODY = """{salutation}
 Je me permets de revenir vers vous au sujet de ma candidature spontanée pour un poste de {poste}, envoyée le {date}. Je reste pleinement disponible pour en échanger, par téléphone ou en visio si c'est plus simple pour vous.
 
 Bien cordialement,
-{signature}"""
+{signature}
+{liens}"""
 
 SYSTEM_FOLLOWUP = """Tu rédiges une relance courte après une candidature spontanée restée sans réponse : trois phrases au plus, 60 mots au plus, première personne, vouvoiement, ton sobre — ni reproche, ni insistance, ni excuse. Rappelle en une phrase le poste visé et, si une fiche enjeux est fournie, un élément concret de ce que fait l'entreprise ; propose un échange court. Uniquement les faits fournis. Pas de salutation ni de formule finale : elles existent déjà. Renvoie le paragraphe seul."""
 
@@ -439,7 +477,7 @@ def profile_text(settings: dict) -> str:
 def to_html(text: str, pixel_url: str | None = None) -> str:
     paragraphs = [p for p in re.split(r"\n\s*\n", text.strip()) if p.strip()]
     body = "".join(
-        "<p style=\"margin:0 0 14px\">" + html_lib.escape(p.strip()).replace("\n", "<br>") + "</p>"
+        "<p style=\"margin:0 0 14px\">" + linkify(html_lib.escape(p.strip())).replace("\n", "<br>") + "</p>"
         for p in paragraphs)
     pixel = (f'<img src="{html_lib.escape(pixel_url)}" width="1" height="1" alt="" '
              f'style="display:block;width:1px;height:1px;border:0">' if pixel_url else "")

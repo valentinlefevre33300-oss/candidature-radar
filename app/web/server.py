@@ -491,7 +491,7 @@ async def outreach_export() -> FileResponse:
 
 # -------------------------------------------------------------- réglages ---
 
-SETTING_KEYS = ("sender_name", "signature", "profile_summary", "dry_run")
+SETTING_KEYS = ("sender_name", "signature", "profile_summary", "linkedin_url", "portfolio_url", "dry_run")
 CV_DIR = DATA_DIR / "cv"
 
 
