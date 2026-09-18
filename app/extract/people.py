@@ -12,6 +12,8 @@ from __future__ import annotations
 import re
 import unicodedata
 
+from .names import is_first_name
+
 # Fonctions classées par utilité pour une candidature spontanée.
 ROLE_KEYWORDS: dict[str, tuple[str, ...]] = {
     "rh": (
@@ -84,20 +86,34 @@ def classify_mailbox(email: str) -> str:
             return category
         if any(re.fullmatch(rf"{kw}[-._]?\d*", local) for kw in keywords):
             return category
-    # Une partie locale structurée comme un nom est probablement nominative.
-    if re.fullmatch(r"[a-z]{2,}[._-][a-z]{2,}", strip_accents(local)):
+    # Une partie locale structurée comme un nom est nominative — à condition
+    # qu'elle commence par un prénom : « india-sales@ » ou « gdpr.dpo@ » ont la
+    # forme, pas le fond.
+    first, last = guess_name_from_local(local)
+    if first and last:
         return "nominatif"
     return "inconnu"
 
 
+_FUNCTIONAL_WORDS = frozenset(w for words in MAILBOX_CATEGORY.values() for w in words)
+
+
 def guess_name_from_local(local: str) -> tuple[str | None, str | None]:
-    """Déduit (prénom, nom) de la partie locale quand elle est structurée."""
+    """Déduit (prénom, nom) de la partie locale quand elle est structurée.
+
+    « marie.dupont » -> (Marie, Dupont) ; « india-sales », « gdpr.dpo » ou
+    « avcl_lacom » -> rien : deux mots séparés par un point ne font pas une
+    personne, il faut un prénom connu et un second mot qui ne soit pas une
+    fonction.
+    """
     cleaned = strip_accents(local.lower())
     cleaned = re.sub(r"\d+$", "", cleaned)
     parts = [p for p in re.split(r"[._-]+", cleaned) if p]
     if len(parts) == 2:
         first, last = parts
-        if len(first) >= 2 and len(last) >= 2:
+        if last in _FUNCTIONAL_WORDS or first in _FUNCTIONAL_WORDS:
+            return None, None
+        if len(first) >= 2 and len(last) >= 2 and is_first_name(first):
             return first.title(), last.title()
         if len(first) == 1 and len(last) >= 2:  # « m.dupont »
             return None, last.title()

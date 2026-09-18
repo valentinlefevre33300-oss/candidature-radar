@@ -144,9 +144,18 @@ sont conservées mais fortement dépriorisées, et la raison est affichée.
 
 ## Ce que l'outil ne fait pas
 
-- **Pas de LinkedIn.** Anti-bot agressif et conditions d'utilisation contraires ; le
-  compte du scrapeur y passe avant les données. L'annuaire légal donne les dirigeants
-  sans ce risque. Les boutons « in » ouvrent une recherche LinkedIn, pas un profil.
+- **Pas de scraping de LinkedIn.** Anti-bot agressif et conditions d'utilisation
+  contraires ; le compte du scrapeur y passe avant les données. Les profils viennent
+  des liens présents sur le site de l'entreprise, puis d'une recherche web faite par
+  Claude (outil de recherche de l'API, limité à linkedin.com) pour les trois meilleurs
+  interlocuteurs nommés de chaque entreprise ; un profil n'est retenu que si son
+  identifiant porte le prénom et le nom de la personne, jamais deviné. Sans profil,
+  le bouton « in » ouvre une recherche LinkedIn.
+- **Pas de faux contacts.** Une personne lue sur une page Équipe doit avoir un prénom
+  connu (dictionnaire de 44 000 prénoms) ou une carte qui pointe vers son profil ;
+  « Life Sciences » ou « Php Symfony » ne deviennent pas des destinataires. Les
+  clients cités en témoignage (« Product Manager, Dunlop ») et les pages blog,
+  actualités ou références ne fournissent pas de contacts.
 - **Pas d'envoi en rafale.** Une personne par entreprise, jamais deux fois la même,
   un mail toutes les ~4 minutes entre 8 h et 19 h, 25 par jour et 200 par mois par
   défaut. Ce sont des candidatures, pas une newsletter — et Gmail coupe les comptes

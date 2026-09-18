@@ -16,6 +16,8 @@ import re
 from bs4 import BeautifulSoup, Tag
 
 from ..domains import ANY_ROLE_RE, _norm
+from ..resolve import linkedin
+from .names import is_first_name
 
 # Mots qui ne sont jamais un prénom ou un nom, même capitalisés.
 NOT_A_NAME = {
@@ -42,8 +44,18 @@ NAME_RE = re.compile(rf"^{_WORD}(?:\s+(?:(?:de|du|des|le|la|van|von|di|da|del|de
 MAX_CARD_CHARS = 320
 MAX_PEOPLE = 12
 
+# Ce qui suit une virgule dans une fonction et n'est pas une autre entreprise :
+# formes juridiques, groupes, et lieux (« Head of Product, France »).
+ORG_NOISE = {
+    "groupe", "group", "inc", "sas", "sa", "sarl", "sasu", "eurl", "ltd", "llc", "gmbh", "ag",
+    "the", "and", "france", "paris", "bordeaux", "lyon", "toulouse", "nantes", "lille", "marseille",
+    "europe", "emea", "monde", "world", "international", "global", "region", "sud", "ouest",
+    "nord", "est", "nouvelle", "aquitaine", "idf", "ile", "siege", "hq",
+}
+_ORG_SEP_RE = re.compile(r"\s*(?:,|;|\|| chez | at | @ | – | — | - )\s*", re.I)
 
-def looks_like_name(text: str, company_tokens: set[str]) -> bool:
+
+def looks_like_name(text: str, company_tokens: set[str], *, require_first_name: bool = True) -> bool:
     text = text.strip(" ,.;:-–|•·")
     if not (4 <= len(text) <= 40) or any(ch.isdigit() for ch in text):
         return False
@@ -57,7 +69,32 @@ def looks_like_name(text: str, company_tokens: set[str]) -> bool:
         return False
     if ANY_ROLE_RE.search(" ".join(normalized)):
         return False
+    # La forme ne suffit pas : « Life Sciences » ou « Php Symfony » ont l'air
+    # d'un nom. Le premier mot doit être un prénom connu.
+    if require_first_name and not is_first_name(words[0]):
+        return False
     return True
+
+
+def is_external(role: str, company_tokens: set[str]) -> bool:
+    """« Digital Product Manager, Dunlop Protective Footwear » : un client cité en
+    témoignage, pas un salarié de l'entreprise explorée.
+
+    Une fonction suivie d'un nom d'organisation étranger à l'entreprise désigne
+    quelqu'un d'ailleurs. « DRH, groupe Nomios » sur le site de Nomios reste
+    interne ; « Head of Product, France » aussi.
+    """
+    parts = [p for p in _ORG_SEP_RE.split(role) if p and p.strip()]
+    if len(parts) < 2:
+        return False
+    org = parts[-1].strip(" .")
+    words = org.split()
+    if not org or not (1 <= len(words) <= 6) or not words[0][:1].isupper():
+        return False
+    if looks_like_role(org):
+        return False
+    tokens = {_norm(w) for w in re.split(r"[^\w]+", org) if len(w) > 2} - ORG_NOISE
+    return bool(tokens) and not (tokens & company_tokens)
 
 
 def looks_like_role(text: str) -> bool:
@@ -84,6 +121,13 @@ def _leaf_texts(node: Tag) -> list[str]:
     return out
 
 
+def _linked_profile(card: Tag | None, first: str, last: str) -> bool:
+    """La carte contient-elle un lien vers un profil LinkedIn portant ce nom ?"""
+    if card is None:
+        return False
+    return any(linkedin.matches(url, first, last) for url in linkedin.profile_links(card))
+
+
 def _card_for(node: Tag) -> Tag | None:
     """Le plus petit ancêtre qui contienne quelques textes en plus de la fonction."""
     current = node
@@ -100,19 +144,40 @@ def _card_for(node: Tag) -> Tag | None:
     return None
 
 
-def extract_people(soup: BeautifulSoup, company_name: str = "") -> list[tuple[str, str, str]]:
-    """Renvoie [(prénom, nom, fonction), ...] trouvés dans la page."""
-    company_tokens = {_norm(w) for w in re.split(r"[^\w]+", company_name) if len(w) > 2}
+def company_tokens_for(company_name: str, domain: str | None = None) -> set[str]:
+    """Les mots de la raison sociale et du domaine, pour reconnaître l'entreprise
+    quand elle se cite elle-même (« DRH, groupe Nomios »)."""
+    tokens = {_norm(w) for w in re.split(r"[^\w]+", company_name) if len(w) > 2}
+    if domain:
+        label = domain.lower().removeprefix("www.").split(".")[0]
+        if len(label) > 2:
+            tokens.add(label)
+    return tokens
+
+
+def extract_people(soup: BeautifulSoup, company_name: str = "",
+                   domain: str | None = None) -> list[tuple[str, str, str]]:
+    """Renvoie [(prénom, nom, fonction), ...] trouvés dans la page.
+
+    Une personne n'est retenue que si son prénom est connu — ou, à défaut, si la
+    carte qui la présente pointe vers un profil LinkedIn à son nom : la preuve
+    qu'il s'agit bien de quelqu'un.
+    """
+    company_tokens = company_tokens_for(company_name, domain)
     page = BeautifulSoup(str(soup), "lxml")
     for tag in page(["script", "style", "noscript", "nav", "form", "footer"]):
         tag.decompose()
 
     found: dict[str, tuple[str, str, str]] = {}
 
-    def keep(name: str, role: str) -> None:
-        if not looks_like_name(name, company_tokens):
+    def keep(name: str, role: str, card: Tag | None) -> None:
+        if not looks_like_name(name, company_tokens, require_first_name=False):
             return
         first, last = split_name(name)
+        if not is_first_name(first) and not _linked_profile(card, first, last):
+            return
+        if is_external(role, company_tokens):
+            return
         key = _norm(f"{first} {last}")
         if key not in found:
             found[key] = (first, last, " ".join(role.split())[:90])
@@ -129,8 +194,8 @@ def extract_people(soup: BeautifulSoup, company_name: str = "") -> list[tuple[st
         for sep in (" — ", " – ", " - ", ", ", " | ", " · ", " : "):
             if sep in text:
                 left, right = text.split(sep, 1)
-                if looks_like_role(right) and looks_like_name(left, company_tokens):
-                    keep(left, right)
+                if looks_like_role(right) and looks_like_name(left, company_tokens, require_first_name=False):
+                    keep(left, right, parent)
                     break
         else:
             card = _card_for(parent)
@@ -144,8 +209,8 @@ def extract_people(soup: BeautifulSoup, company_name: str = "") -> list[tuple[st
             # Le nom précède presque toujours la fonction ; on regarde juste avant,
             # puis juste après.
             for candidate in leaves[max(0, index - 2):index][::-1] + leaves[index + 1:index + 2]:
-                if looks_like_name(candidate, company_tokens):
-                    keep(candidate, text)
+                if looks_like_name(candidate, company_tokens, require_first_name=False):
+                    keep(candidate, text, card)
                     break
         if len(found) >= MAX_PEOPLE:
             break

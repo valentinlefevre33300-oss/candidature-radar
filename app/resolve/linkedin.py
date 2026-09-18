@@ -1,23 +1,28 @@
 """Le profil LinkedIn des personnes trouvées — sans jamais interroger LinkedIn.
 
-Deux sources, dans l'ordre : les liens de profil présents sur le site de
+Trois sources, dans l'ordre : les liens de profil présents sur le site de
 l'entreprise (pages Équipe, signatures), rattachés à une personne quand
-l'identifiant du profil contient son prénom et son nom ; puis, à la demande,
-une recherche par moteur (`"Prénom Nom" Entreprise linkedin`) dont on ne
-garde un résultat que s'il passe le même contrôle. LinkedIn lui-même n'est
-pas consulté : ses conditions l'interdisent et il bloque vite.
+l'identifiant du profil contient son prénom et son nom ; puis une recherche
+web faite par Claude (outil de recherche de l'API, limité à linkedin.com) ;
+enfin, sans clé d'API, une recherche par moteur gratuit — qui ne rend plus
+grand-chose, les moteurs servant des résultats dégradés aux robots. Dans tous
+les cas on ne garde un profil que si son identifiant porte le nom de la
+personne : jamais de profil deviné. LinkedIn lui-même n'est pas consulté :
+ses conditions l'interdisent et il bloque vite.
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 import re
 from urllib.parse import unquote
 
+import anthropic
 import httpx
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 
-from ..config import REQUEST_TIMEOUT
+from ..config import ANTHROPIC_API_KEY, CLAUDE_MODEL, REQUEST_TIMEOUT
 from ..extract.people import strip_accents
 from ..models import Contact
 
@@ -37,7 +42,7 @@ def canonical(url: str) -> str | None:
     return f"https://www.linkedin.com/in/{slug}" if slug else None
 
 
-def profile_links(soup: BeautifulSoup) -> list[str]:
+def profile_links(soup: BeautifulSoup | Tag) -> list[str]:
     """Les profils LinkedIn liés depuis une page, sans doublon, dans l'ordre."""
     found: list[str] = []
     for anchor in soup.find_all("a", href=True):
@@ -119,10 +124,8 @@ async def _engine(client: httpx.AsyncClient, name: str, query: str) -> list[str]
     return urls
 
 
-async def find_profile(client: httpx.AsyncClient, first: str, last: str,
-                       company_name: str) -> str | None:
-    """Cherche le profil par moteur, au mieux : les moteurs gratuits bloquent vite les
-    requêtes automatiques, et on ne renvoie que ce qui porte le nom de la personne."""
+async def _engines_profile(client: httpx.AsyncClient, first: str, last: str,
+                           company_name: str) -> str | None:
     query = f'"{first} {last}" {company_name} linkedin'.strip()
     for name in ("bing", "brave", "ddg"):
         for raw in await _engine(client, name, query):
@@ -130,3 +133,80 @@ async def find_profile(client: httpx.AsyncClient, first: str, last: str,
             if url and matches(url, first, last):
                 return url
     return None
+
+
+# --- recherche web par Claude ---------------------------------------------
+
+_SYSTEM = (
+    "Tu retrouves l'adresse du profil LinkedIn public d'une personne à partir de son nom "
+    "et de son entreprise. Fais une recherche web, puis réponds uniquement par l'adresse du "
+    "profil (https://www.linkedin.com/in/...) si un résultat porte clairement le prénom et "
+    "le nom de la personne, sinon réponds exactement INCONNU. Aucun autre texte."
+)
+_TOOLS = [{"type": "web_search_20260209", "name": "web_search", "max_uses": 2,
+           "allowed_domains": ["linkedin.com"]}]
+_LOOKUPS = asyncio.Semaphore(3)   # recherches Claude simultanées, toutes entreprises confondues
+_client: anthropic.AsyncAnthropic | None = None
+
+
+def search_available() -> bool:
+    """La recherche web par Claude est-elle possible (clé d'API renseignée) ?"""
+    return bool(ANTHROPIC_API_KEY)
+
+
+def _get_client() -> anthropic.AsyncAnthropic:
+    global _client
+    if _client is None:
+        _client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY, timeout=60.0)
+    return _client
+
+
+def _urls_in(content: list) -> list[str]:
+    """La réponse du modèle d'abord, puis toutes les adresses remontées par la recherche."""
+    urls: list[str] = []
+    for block in content:
+        if block.type == "text":
+            urls.extend(re.findall(r"https?://\S+", block.text))
+    for block in content:
+        results = getattr(block, "content", None)
+        if block.type == "web_search_tool_result" and isinstance(results, list):
+            urls.extend(url for url in (getattr(r, "url", None) for r in results) if url)
+    return urls
+
+
+async def _claude_profile(first: str, last: str, company_name: str) -> str | None:
+    if not search_available():
+        return None
+    prompt = f"Profil LinkedIn de {first} {last}, qui travaille (ou a travaillé) chez {company_name}."
+    try:
+        async with _LOOKUPS:
+            response = await _get_client().beta.messages.create(
+                model=CLAUDE_MODEL,
+                max_tokens=300,
+                system=_SYSTEM,
+                messages=[{"role": "user", "content": prompt}],
+                tools=_TOOLS,
+                output_config={"effort": "low"},
+                betas=["server-side-fallback-2026-07-01"],
+                fallbacks="default",
+            )
+    except anthropic.APIError as exc:
+        log.warning("recherche LinkedIn par Claude impossible : %s", exc)
+        return None
+    if response.stop_reason == "refusal":
+        return None
+    for raw in _urls_in(response.content):
+        url = canonical(raw)
+        if url and matches(url, first, last):
+            return url
+    return None
+
+
+async def find_profile(client: httpx.AsyncClient, first: str, last: str,
+                       company_name: str) -> str | None:
+    """Le profil de la personne, ou None. Recherche web par Claude si une clé est
+    configurée, moteurs gratuits sinon ; dans les deux cas seul un profil dont
+    l'identifiant porte le nom est retenu."""
+    if search_available():
+        return await _claude_profile(first, last, company_name)
+    return await _engines_profile(client, first, last, company_name)

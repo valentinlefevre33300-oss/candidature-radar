@@ -334,6 +334,22 @@ def save_contacts(run_id: int, contacts: list[Contact]) -> None:
 
 
 
+def known_linkedin(emails: list[str]) -> dict[str, str]:
+    """Les profils déjà trouvés pour ces adresses lors de recherches précédentes :
+    une personne ne se cherche qu'une fois."""
+    wanted = sorted({e.lower() for e in emails if e})
+    if not wanted:
+        return {}
+    marks = ",".join("?" * len(wanted))
+    with connect() as conn:
+        rows = conn.execute(
+            f"SELECT lower(email) AS email, linkedin_url FROM contacts "
+            f"WHERE linkedin_url IS NOT NULL AND lower(email) IN ({marks}) "
+            f"UNION SELECT lower(email), linkedin_url FROM applications "
+            f"WHERE linkedin_url IS NOT NULL AND lower(email) IN ({marks})", wanted + wanted)
+        return {r[0]: r[1] for r in rows}
+
+
 def set_contact_linkedin(run_id: int, email: str, url: str) -> None:
     with connect() as conn:
         conn.execute("UPDATE contacts SET linkedin_url=? WHERE run_id=? AND email=?", (url, run_id, email))

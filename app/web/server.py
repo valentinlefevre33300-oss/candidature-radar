@@ -426,13 +426,20 @@ async def find_linkedin(run_id: int, payload: LinkedinPayload) -> dict:
             and r.get("first_name") and r.get("last_name") and not r.get("linkedin_url")][:40]
     found: dict[str, str] = {}
     async with httpx.AsyncClient(follow_redirects=True) as client:
-        for row in rows:
+        async def lookup(row: dict) -> tuple[str, str | None]:
             url = await linkedin_lookup.find_profile(client, row["first_name"], row["last_name"],
                                                     compose.pretty_company(row.get("company_name")))
-            if url:
-                db.set_contact_linkedin(run_id, row["email"], url)
-                found[row["email"]] = url
-            await asyncio.sleep(1.2)   # un moteur gratuit, on ne le martèle pas
+            if not linkedin_lookup.search_available():
+                await asyncio.sleep(1.2)   # un moteur gratuit, on ne le martèle pas
+            return row["email"], url
+        if linkedin_lookup.search_available():
+            results = await asyncio.gather(*(lookup(r) for r in rows))
+        else:
+            results = [await lookup(r) for r in rows]
+    for email, url in results:
+        if url:
+            db.set_contact_linkedin(run_id, email, url)
+            found[email] = url
     return {"searched": len(rows), "found": found}
 
 

@@ -250,6 +250,49 @@ check(extract_people(BeautifulSoup(BETS, "lxml"), "BETCLIC") == [], "une liste d
 check(classify_role("Lech Po", "produit") == (None, False), "« Lech Po » n'est pas un product owner")
 check(job_domain("PO") == "produit", "« PO » reste compris dans un intitule de poste saisi")
 
+# Regression : des intitules de rubriques devenaient des personnes a contacter
+# (« Life Sciences — IS & Digital », « Php Symfony — Agilite produit »). Une
+# personne a un prenom connu, ou une carte qui pointe vers son profil LinkedIn.
+from app.extract.names import is_first_name
+from app.extract.team import is_external, looks_like_name
+check(all(is_first_name(n) for n in ("Sunil", "Isaure", "Geert", "Clare", "Usman", "Jean-Claude", "Marie-Laure", "Annemarie", "Océane")),
+      "prenoms francais et internationaux reconnus")
+check(not any(is_first_name(n) for n in ("Life", "Php", "Architecture", "Occupational", "Previous", "Programme", "Catégorie", "")),
+      "des mots de rubrique ne sont pas des prenoms")
+FAKE = ["Life Sciences", "Php Symfony", "Architecture Mach", "Occupational Shifts", "Previous Article",
+        "Programme Ai Champions", "Market Research", "Plateforme Cse"]
+check(not any(looks_like_name(n, set()) for n in FAKE), "les intitules de rubriques ne sont pas des noms")
+check(all(looks_like_name(n, set()) for n in ("Sunil Pandita", "Isaure Tsassis", "Geert Besten", "Audrey Auber Bouillot")),
+      "les vrais noms passent")
+BLOG = """<main><article><h2>Life Sciences</h2><p>IS &amp; Digital</p></article>
+<div class="card"><h3>Php Symfony</h3><p>Agilité produit</p></div>
+<div class="card"><h3>Mei Wang</h3><p>Directrice technique</p></div>
+<div class="card"><h3>Zorblat Kremm</h3><p>Lead developer</p><a href="https://www.linkedin.com/in/zorblat-kremm-1a2b">in</a></div>
+<div class="card"><h3>Blorptic Quux</h3><p>Lead developer</p></div></main>"""
+_people = {(f, l) for f, l, _ in extract_people(BeautifulSoup(BLOG, "lxml"), "ACME")}
+check(("Life", "Sciences") not in _people and ("Php", "Symfony") not in _people, "rubriques ecartees de l'equipe")
+check(("Mei", "Wang") in _people, "prenom connu : retenue")
+check(("Zorblat", "Kremm") in _people, "prenom inconnu mais profil LinkedIn a son nom dans la carte : retenue")
+check(("Blorptic", "Quux") not in _people, "prenom inconnu sans preuve : ecartee")
+# Temoignages clients : « Geert Besten, Digital Product Manager, Dunlop » sur le site de Smile.
+check(is_external("Digital Product Manager, Dunlop Protective Footwear", {"smile"}), "un client cite en temoignage n'est pas un salarie")
+check(not is_external("directrice des ressources humaines, groupe Nomios", {"nomios"}), "l'entreprise qui se cite reste interne")
+check(not is_external("Head of Product, France", {"smile"}) and not is_external("Staff Product Manager", {"x"}),
+      "un lieu ou une fonction simple ne designent pas une autre entreprise")
+TESTIMONY = '<div class="quote"><p>Excellent partenaire.</p><h4>Geert Besten</h4><p>Digital Product Manager, Dunlop Protective Footwear</p></div>'
+check(extract_people(BeautifulSoup(TESTIMONY, "lxml"), "Smile", "smile.fr") == [], "temoignage client : personne exterieure ecartee")
+from app.pipeline import wants_people
+check(not wants_people("https://x.fr/blog/2024/transformation") and not wants_people("https://x.fr/clients/temoignages/"),
+      "pas de personnes lues sur les pages blog / clients")
+check(wants_people("https://x.fr/equipe") and wants_people("https://x.fr/a-propos/"), "pages equipe et a-propos lues")
+# Adresses qui ont la forme prenom.nom sans etre des personnes.
+check(guess_name_from_local("india-sales") == (None, None) and guess_name_from_local("gdpr.dpo") == (None, None)
+      and guess_name_from_local("avcl_lacom") == (None, None), "india-sales@, gdpr.dpo@, avcl_lacom@ ne sont pas des personnes")
+check(guess_name_from_local("marie.dupont") == ("Marie", "Dupont") and guess_name_from_local("m.dupont") == (None, "Dupont"),
+      "prenom.nom et p.nom toujours compris")
+check(classify_mailbox("india-sales@acme.fr") != "nominatif" and classify_mailbox("marie.dupont@acme.fr") == "nominatif",
+      "seule une adresse commencant par un prenom est nominative")
+
 # --------------------------------------------------------------------------
 print("\n== Personnes de la page equipe -> adresses ==")
 from app.pipeline import _address_pattern, _infer_people_emails

@@ -15,13 +15,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from typing import Awaitable, Callable
+from urllib.parse import urlparse
 
 import httpx
 from bs4 import BeautifulSoup
 
 from .config import GLOBAL_CONCURRENCY, MAX_PAGES_PER_SITE, SMTP_PROBE
 from .crawl.fetcher import PoliteFetcher, build_client
+from .compose import pretty_company
 from .crawl.spider import crawl_site, is_about_page, page_main_text, page_tagline
 from .domains import ADJACENT, company_fit, find_evidence, classify_role, is_manager, job_domain
 from .extract.emails import extract_emails
@@ -111,6 +114,21 @@ def _build_contact(email: str, obfuscated: bool, url: str, page_text: str,
 
 SMALL_COMPANY = {"00", "01", "02", "03", "11", "12"}
 MAX_PEOPLE_PER_COMPANY = 6
+
+# Les pages de blog, d'actualités et de témoignages présentent des clients, des
+# invités ou des auteurs d'articles : pas l'équipe. On n'y lit pas de personnes.
+_NO_PEOPLE_PAGE_RE = re.compile(
+    r"/(?:blog|news|actualit|article|temoignage|testimonial|case-stud|cas-client|etude|"
+    r"reference|client|webinar|event|evenement|podcast|press|media)", re.I)
+
+# Recherche du profil LinkedIn : les meilleurs interlocuteurs nommés seulement.
+LINKEDIN_LOOKUPS_PER_COMPANY = 3
+LINKEDIN_MIN_SCORE = 40.0
+WORTH_A_PROFILE = ("metier", "direction", "rh")
+
+
+def wants_people(url: str) -> bool:
+    return not _NO_PEOPLE_PAGE_RE.search(urlparse(url).path)
 GUESSED_PATTERN = "{first}.{last}"   # le motif le plus repandu en France
 
 
@@ -235,6 +253,45 @@ def _infer_people_emails(company: Company, observed: list[Contact],
     return inferred
 
 
+async def _find_profiles(client: httpx.AsyncClient, contacts: list[Contact], company: Company,
+                         callback: ProgressCallback) -> None:
+    """Le profil LinkedIn des meilleurs interlocuteurs nommés.
+
+    On cherche vraiment la personne, pas seulement son adresse : un profil qui
+    porte son nom confirme qu'elle existe et permet de l'aborder ailleurs que
+    par mail. Les profils déjà trouvés lors d'une recherche précédente sont
+    réutilisés ; les autres passent par la recherche web (voir `resolve.linkedin`).
+    """
+    targets = [c for c in sorted(contacts, key=lambda c: -c.score)
+               if c.first_name and c.last_name and not c.linkedin_url
+               and c.category in WORTH_A_PROFILE and c.score >= LINKEDIN_MIN_SCORE]
+    targets = targets[:LINKEDIN_LOOKUPS_PER_COMPANY]
+    if not targets:
+        return
+    from .db import known_linkedin  # import tardif : le pipeline ne dépend pas de la base
+    known = known_linkedin([c.email for c in targets])
+    pending: list[Contact] = []
+    for contact in targets:
+        url = known.get(contact.email.lower())
+        if url:
+            contact.linkedin_url = url
+            contact.reasons.append("profil LinkedIn retrouvé lors d'une recherche précédente")
+        else:
+            pending.append(contact)
+    if not pending or not linkedin.search_available():
+        return
+    await _emit(callback, event="entreprise", name=company.name,
+                step=f"recherche du profil LinkedIn de {len(pending)} personne(s)")
+    company_label = pretty_company(company.name)
+    found = await asyncio.gather(*(linkedin.find_profile(client, c.first_name, c.last_name, company_label)
+                                   for c in pending))
+    for contact, url in zip(pending, found):
+        if url:
+            contact.linkedin_url = url
+            contact.reasons.append("profil LinkedIn trouvé par recherche web : la personne existe bien")
+            contact.score = round(contact.score + 5, 1)
+
+
 async def process_company(fetcher: PoliteFetcher, client: httpx.AsyncClient,
                           company: Company, query: SearchQuery, *,
                           use_search: bool, verify_smtp: bool,
@@ -272,8 +329,9 @@ async def process_company(fetcher: PoliteFetcher, client: httpx.AsyncClient,
             about_parts.append(page_main_text(soup, 800))
         # Les pages Equipe donnent des noms et des fonctions sans adresse :
         # c'est la que se trouvent les responsables de service.
-        for first, last, role in extract_people(soup, company.name):
-            people.append((first, last, role, url))
+        if wants_people(url):
+            for first, last, role in extract_people(soup, company.name, company.domain):
+                people.append((first, last, role, url))
         profile_links.extend(u for u in linkedin.profile_links(soup) if u not in profile_links)
         if domain and len(evidence) < 8:
             body = BeautifulSoup(html, "lxml")
@@ -331,6 +389,8 @@ async def process_company(fetcher: PoliteFetcher, client: httpx.AsyncClient,
 
     for contact in contacts:
         score_contact(contact, company, query.job_title)
+
+    await _find_profiles(client, contacts, company, callback)
 
     await _emit(callback, event="entreprise", name=company.name,
                 step=f"{len(contacts)} contact(s)" + (f" · métier repéré : {company.fit_terms}" if company.fit_terms
