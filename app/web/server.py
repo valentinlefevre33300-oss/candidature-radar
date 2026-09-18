@@ -491,7 +491,8 @@ async def outreach_export() -> FileResponse:
 
 # -------------------------------------------------------------- réglages ---
 
-SETTING_KEYS = ("sender_name", "signature", "profile_summary", "linkedin_url", "portfolio_url", "dry_run")
+SETTING_KEYS = ("sender_name", "signature", "profile_summary", "linkedin_url", "portfolio_url",
+                "subject_tpl", "body_tpl", "dry_run")
 CV_DIR = DATA_DIR / "cv"
 
 
@@ -511,7 +512,10 @@ async def settings_get() -> dict:
         "dry_run_forced": DRY_RUN,
         "caps": {"monthly": MONTHLY_CAP, "daily": DAILY_CAP},
         "variables": compose.VARIABLES,
-        "defaults": {"subject": compose.DEFAULT_SUBJECT, "body": compose.DEFAULT_BODY},
+        # Le modèle des nouvelles campagnes : celui des réglages, sinon celui d'origine.
+        "defaults": {"subject": values.get("subject_tpl") or compose.DEFAULT_SUBJECT,
+                     "body": values.get("body_tpl") or compose.DEFAULT_BODY},
+        "factory": {"subject": compose.DEFAULT_SUBJECT, "body": compose.DEFAULT_BODY},
     }
 
 

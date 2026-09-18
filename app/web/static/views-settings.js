@@ -1,6 +1,40 @@
 /* Vue : Réglages — Gmail, expéditeur, CV, envois, rédaction. */
 import { $, $$, esc, api, upload, state, toast, pageHead, queryParam } from './core.js';
 
+/* Exemple rendu côté navigateur : les variables remplies avec une entreprise fictive. */
+const SAMPLE = { salutation: 'Bonjour Claire Martin,', prenom: 'Claire', nom: 'Martin', entreprise: 'Atelier Nova', poste: '', ville: 'Bordeaux',
+                 secteur: 'Tech', taille: '20 à 49 salariés', moi: '', signature: '', linkedin: '', portfolio: '', liens: '',
+                 ouverture: 'Vous pilotez le produit chez Atelier Nova : c’est dans votre équipe que je souhaite rejoindre, en tant que product owner.',
+                 accroche: 'Votre plateforme de réservation grandit vite ; j’ai déjà mené ce type de chantier, de la priorisation au suivi des équipes.' };
+function renderSample(tpl, v, job) {
+  const me = v.sender_name || 'Ton nom';
+  const links = [v.linkedin_url ? `LinkedIn : ${v.linkedin_url}` : '', v.portfolio_url ? `Portfolio : ${v.portfolio_url}` : ''].filter(Boolean).join('\n');
+  const ctx = { ...SAMPLE, poste: job || 'product owner', moi: me, signature: v.signature || me, linkedin: v.linkedin_url || '', portfolio: v.portfolio_url || '', liens: links };
+  return (tpl || '').replace(/\{(\w+)\}/g, (m, k) => (k in ctx ? ctx[k] : m)).replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+function bindTemplateEditor(s) {
+  const v = s.settings, subj = $('#tplSubject'), body = $('#tplBody'), prev = $('#tplPreview');
+  const draw = () => { prev.innerHTML = `<b>${esc(renderSample(subj.value, v))}</b>\n\n${esc(renderSample(body.value, v))}`; };
+  subj.oninput = draw; body.oninput = draw; draw();
+  $$('#tplVars [data-var]').forEach(b => b.onclick = () => {
+    const tag = `{${b.dataset.var}}`, ta = document.activeElement === subj ? subj : body;
+    const at = ta.selectionStart ?? ta.value.length;
+    ta.value = ta.value.slice(0, at) + tag + ta.value.slice(ta.selectionEnd ?? at);
+    ta.focus(); ta.selectionEnd = at + tag.length; draw();
+  });
+  $('#tplSave').onclick = async () => {
+    const factory = s.factory || {};
+    const same = subj.value.trim() === factory.subject && body.value.trim() === factory.body;
+    await api('/api/settings', { method: 'PUT', body: JSON.stringify({ subject_tpl: same ? '' : subj.value, body_tpl: same ? '' : body.value }) });
+    toast('Modèle enregistré'); state.settings = null;
+  };
+  $('#tplReset').onclick = async () => {
+    subj.value = s.factory?.subject || ''; body.value = s.factory?.body || ''; draw();
+    await api('/api/settings', { method: 'PUT', body: JSON.stringify({ subject_tpl: '', body_tpl: '' }) });
+    toast('Modèle d’origine rétabli'); state.settings = null;
+  };
+}
+
 export async function renderSettings() {
   const view = $('#view');
   view.innerHTML = '<div class="empty">Chargement…</div>';
@@ -85,9 +119,22 @@ export async function renderSettings() {
     </div>
 
     <section class="section">
-      <div class="section-head"><h2><span class="emoji">✍️</span>Variables du gabarit</h2></div>
-      <div class="card" style="padding:18px 22px"><div class="pills">${Object.entries(s.variables).map(([k, d]) => `<span class="pill" title="${esc(d)}" style="background:#fff;cursor:help">{${k}} <span class="muted" style="font-weight:400">— ${esc(d)}</span></span>`).join('')}</div></div>
+      <div class="section-head"><h2><span class="emoji">✍️</span>Ton modèle de mail</h2><span class="muted" style="font-size:13px">Le point de départ de chaque campagne — tu peux encore l’ajuster campagne par campagne.</span></div>
+      <div class="card"><div class="card-body">
+        <div class="field" style="margin-bottom:12px"><label class="lbl">Objet</label><input class="input on-paper" id="tplSubject" value="${esc(s.defaults.subject)}"></div>
+        <div class="field" style="margin-bottom:10px"><label class="lbl">Corps</label><textarea class="input on-paper" id="tplBody" style="min-height:260px">${esc(s.defaults.body)}</textarea></div>
+        <div class="hint" style="margin-bottom:8px">Clique un élément pour l’insérer là où est le curseur. Les éléments en couleur sont remplis pour chaque entreprise ; <b>{ouverture}</b> et <b>{accroche}</b> sont rédigés à chaque envoi.</div>
+        <div class="pills" id="tplVars" style="margin-bottom:18px">${Object.entries(s.variables).map(([k, d]) => `<button class="pill" data-var="${k}" title="${esc(d)}" style="background:${['ouverture', 'accroche'].includes(k) ? 'var(--ux)' : 'var(--card)'}">{${k}}</button>`).join('')}</div>
+        <div class="section-head" style="margin-top:4px"><h3>Exemple, avec une entreprise fictive</h3></div>
+        <div class="mail-preview" id="tplPreview"></div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px;align-items:center">
+          <button class="btn btn-accent" id="tplSave">Enregistrer le modèle</button>
+          <button class="btn btn-text" id="tplReset">Revenir au modèle d’origine</button>
+          <span class="hint" id="tplHint"></span>
+        </div>
+      </div></div>
     </section>`;
+  bindTemplateEditor(s);
 
   const disc = $('#gmDisc'); if (disc) disc.onclick = async () => { if (!confirm('Déconnecter Gmail ?')) return; await api('/api/gmail/disconnect', { method: 'POST' }); toast('Déconnecté'); renderSettings(); };
   const test = $('#gmTest'); if (test) test.onclick = async () => {
