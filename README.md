@@ -221,10 +221,16 @@ Mise en place, une fois :
    puis `cloudflared tunnel route dns leradar leradar.site` (crée l'enregistrement DNS).
 4. `.env` : `CR_BASE_URL=https://leradar.site` et `CR_PUBLIC_URL=https://leradar.site`.
    Google Cloud → client OAuth → URI de redirection `https://leradar.site/api/gmail/callback`.
-5. `.\deploy\pc\install-tasks.ps1` : deux tâches planifiées à l'ouverture de session
-   (serveur sur `127.0.0.1:8010`, tunnel), journaux dans `data\logs\`. Retirer avec
-   `uninstall-tasks.ps1`. Redémarrer le serveur après une modification :
-   `Stop-ScheduledTask` puis `Start-ScheduledTask -TaskName "Candidature Radar - serveur"`.
+5. `.\deploy\pc\install-tasks.ps1 -Interactive` : deux tâches planifiées lancées à
+   l'ouverture de session — le serveur (`pythonw`, sans console, sur `127.0.0.1:8010`,
+   journal `data\logs\serveur.log` via `deploy\pc\logging.json`) et le tunnel
+   (`cloudflared` derrière `conhost --headless`, journal `data\logs	unnel.log`). Un
+   déclencheur se répète chaque minute : si un processus meurt, il repart dans la
+   minute, sinon rien ne se passe. Sans l'option, depuis une PowerShell
+   administrateur, les tâches démarrent au boot de Windows sans attendre l'ouverture de
+   session (S4U). Retirer avec `uninstall-tasks.ps1`. Redémarrer le serveur après une
+   modification : `Stop-ScheduledTask -TaskName "Candidature Radar - serveur"` — le
+   battement de cœur le relance dans la minute (ou `Start-ScheduledTask` tout de suite).
 
 Le `Dockerfile` reste utile le jour où l'outil part sur une vraie machine (VPS).
 
